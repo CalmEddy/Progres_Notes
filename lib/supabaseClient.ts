@@ -9,12 +9,24 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 // Client-side Supabase client (for use in Client Components)
 // This file must NOT import next/headers to avoid build errors
+
+// Singleton instance to avoid creating multiple clients
+let supabaseClientInstance: ReturnType<typeof createClient> | null = null;
+
 export function createSupabaseClient() {
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  // Return singleton instance if it exists
+  if (supabaseClientInstance) {
+    return supabaseClientInstance;
+  }
+  
+  // Create new instance only if it doesn't exist
+  supabaseClientInstance = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
     },
   });
+  
+  return supabaseClientInstance;
 }

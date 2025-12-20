@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { createNoteForUser, listNotesForUser } from '@/lib/notes';
+import { updateFolderForUser, deleteFolderForUser } from '@/lib/folders';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Helper to get session from Authorization header or cookies
 async function getSessionFromRequest(request: NextRequest) {
-  // Try to get token from Authorization header first
   const authHeader = request.headers.get('Authorization');
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
@@ -18,7 +17,6 @@ async function getSessionFromRequest(request: NextRequest) {
     }
   }
 
-  // Fallback to cookies
   const cookieHeader = request.headers.get('Cookie');
   if (cookieHeader) {
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -35,28 +33,11 @@ async function getSessionFromRequest(request: NextRequest) {
   return null;
 }
 
-// GET /api/notes - List all notes for the authenticated user
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getSessionFromRequest(request);
-
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const notes = await listNotesForUser(session.user.id, session.accessToken);
-    return NextResponse.json(notes);
-  } catch (error) {
-    console.error('Error listing notes:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to list notes' },
-      { status: 500 }
-    );
-  }
-}
-
-// POST /api/notes - Create a new note
-export async function POST(request: NextRequest) {
+// PUT /api/folders/[id] - Update folder
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getSessionFromRequest(request);
 
@@ -65,38 +46,62 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { title, body: noteBody, folder_id, parent_note_id, position } = body;
+    const { name, parent_id, position } = body;
 
-    if (!noteBody || typeof noteBody !== 'string' || noteBody.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Note body is required' },
-        { status: 400 }
-      );
-    }
+    const updates: {
+      name?: string;
+      parent_id?: string | null;
+      position?: number;
+    } = {};
 
-    // Validate: note cannot be in both folder and under another note
-    if (folder_id && parent_note_id) {
-      return NextResponse.json(
-        { error: 'Note cannot be in both a folder and nested under another note' },
-        { status: 400 }
-      );
-    }
+    if (name !== undefined) updates.name = name;
+    if (parent_id !== undefined) updates.parent_id = parent_id;
+    if (position !== undefined) updates.position = position;
 
-    const note = await createNoteForUser(
+    const folder = await updateFolderForUser(
+      params.id,
       session.user.id,
-      title || null,
-      noteBody,
-      folder_id !== undefined ? folder_id : null,
-      parent_note_id !== undefined ? parent_note_id : null,
-      position !== undefined ? position : 0,
+      updates,
       session.accessToken
     );
 
-    return NextResponse.json(note, { status: 201 });
+    return NextResponse.json(folder);
   } catch (error) {
-    console.error('Error creating note:', error);
+    console.error('Error updating folder:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to create note' },
+      { error: error instanceof Error ? error.message : 'Failed to update folder' },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/folders/[id] - Delete folder
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const session = await getSessionFromRequest(request);
+
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const moveChildrenToParent = searchParams.get('moveChildrenToParent') !== 'false';
+
+    await deleteFolderForUser(
+      params.id,
+      session.user.id,
+      moveChildrenToParent,
+      session.accessToken
+    );
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting folder:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to delete folder' },
       { status: 500 }
     );
   }

@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { createNoteForUser, listNotesForUser } from '@/lib/notes';
+import { moveNoteToFolder, moveNoteToNote } from '@/lib/binder';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 // Helper to get session from Authorization header or cookies
 async function getSessionFromRequest(request: NextRequest) {
-  // Try to get token from Authorization header first
   const authHeader = request.headers.get('Authorization');
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
@@ -18,7 +17,6 @@ async function getSessionFromRequest(request: NextRequest) {
     }
   }
 
-  // Fallback to cookies
   const cookieHeader = request.headers.get('Cookie');
   if (cookieHeader) {
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -35,28 +33,11 @@ async function getSessionFromRequest(request: NextRequest) {
   return null;
 }
 
-// GET /api/notes - List all notes for the authenticated user
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getSessionFromRequest(request);
-
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const notes = await listNotesForUser(session.user.id, session.accessToken);
-    return NextResponse.json(notes);
-  } catch (error) {
-    console.error('Error listing notes:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to list notes' },
-      { status: 500 }
-    );
-  }
-}
-
-// POST /api/notes - Create a new note
-export async function POST(request: NextRequest) {
+// POST /api/notes/[id]/move - Move note to folder or reorder
+export async function POST(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getSessionFromRequest(request);
 
@@ -65,11 +46,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { title, body: noteBody, folder_id, parent_note_id, position } = body;
+    const { folder_id, parent_note_id, position } = body;
 
-    if (!noteBody || typeof noteBody !== 'string' || noteBody.trim().length === 0) {
+    if (position === undefined) {
       return NextResponse.json(
-        { error: 'Note body is required' },
+        { error: 'Position is required' },
         { status: 400 }
       );
     }
@@ -82,21 +63,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const note = await createNoteForUser(
-      session.user.id,
-      title || null,
-      noteBody,
-      folder_id !== undefined ? folder_id : null,
-      parent_note_id !== undefined ? parent_note_id : null,
-      position !== undefined ? position : 0,
-      session.accessToken
-    );
+    // Move to folder or note based on what's provided
+    if (folder_id !== undefined) {
+      await moveNoteToFolder(
+        params.id,
+        session.user.id,
+        folder_id !== undefined ? folder_id : null,
+        position,
+        session.accessToken
+      );
+    } else if (parent_note_id !== undefined) {
+      await moveNoteToNote(
+        params.id,
+        session.user.id,
+        parent_note_id !== undefined ? parent_note_id : null,
+        position,
+        session.accessToken
+      );
+    } else {
+      // Moving to root (no folder, no parent note)
+      await moveNoteToFolder(
+        params.id,
+        session.user.id,
+        null,
+        position,
+        session.accessToken
+      );
+    }
 
-    return NextResponse.json(note, { status: 201 });
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error creating note:', error);
+    console.error('Error moving note:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to create note' },
+      { error: error instanceof Error ? error.message : 'Failed to move note' },
       { status: 500 }
     );
   }

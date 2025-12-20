@@ -1,6 +1,8 @@
 import { createSupabaseServerClient } from './supabaseServerClient';
 import { createClient } from '@supabase/supabase-js';
 import { generateEmbedding } from './embeddings';
+import { extractPhrases } from './phrases/phraseExtractor';
+import { storePhrasesForNote } from './phrases/phraseStorage';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -27,6 +29,9 @@ export interface Note {
   user_id: string;
   title: string | null;
   body: string;
+  folder_id: string | null;
+  parent_note_id: string | null;
+  position: number;
   created_at: string;
   updated_at: string;
 }
@@ -44,6 +49,9 @@ export async function createNoteForUser(
   userId: string,
   title: string | null,
   body: string,
+  folderId?: string | null,
+  parentNoteId?: string | null,
+  position?: number,
   accessToken?: string
 ): Promise<Note> {
   // Allow empty body if we have a title (for pages with only titles)
@@ -60,6 +68,11 @@ export async function createNoteForUser(
   // Generate embedding
   const embedding = await generateEmbedding(textForEmbedding);
 
+  // Validate: note cannot be in both folder and under another note
+  if (folderId && parentNoteId) {
+    throw new Error('Note cannot be in both a folder and nested under another note');
+  }
+
   // Create authenticated Supabase client for RLS
   const supabase = createAuthenticatedClient(accessToken) || await createSupabaseServerClient();
   
@@ -70,6 +83,9 @@ export async function createNoteForUser(
       title: title || null,
       body: body.trim(),
       embedding: embedding,
+      folder_id: folderId !== undefined ? folderId : null,
+      parent_note_id: parentNoteId !== undefined ? parentNoteId : null,
+      position: position !== undefined ? position : 0,
     })
     .select()
     .single();
@@ -83,17 +99,36 @@ export async function createNoteForUser(
     throw new Error('Note created but no data returned');
   }
 
+  // Extract and store phrases (non-blocking - don't fail note creation if this fails)
+  try {
+    const textToExtract = textForEmbedding;
+    if (textToExtract && textToExtract.trim().length > 0) {
+      const phrases = extractPhrases(textToExtract);
+      if (phrases.length > 0) {
+        // Store phrases asynchronously - don't await to avoid blocking
+        storePhrasesForNote(userId, data.id, phrases, accessToken).catch((error) => {
+          console.error('Error storing phrases for note (non-blocking):', error);
+        });
+      }
+    }
+  } catch (error) {
+    // Log but don't throw - phrase extraction failures shouldn't prevent note creation
+    console.error('Error extracting phrases for note (non-blocking):', error);
+  }
+
   return data as Note;
 }
 
 /**
  * Update an existing note and regenerate its embedding
+ * Also re-extracts and updates phrases
  */
 export async function updateNoteForUser(
   noteId: string,
   userId: string,
   title: string | null,
-  body: string
+  body: string,
+  accessToken?: string
 ): Promise<Note> {
   if (!body || body.trim().length === 0) {
     throw new Error('Note body cannot be empty');
@@ -107,9 +142,10 @@ export async function updateNoteForUser(
   // Generate embedding
   const embedding = await generateEmbedding(textForEmbedding);
 
-  // Update note in database
-  const supabase = await createSupabaseServerClient();
+  // Create authenticated Supabase client for RLS
+  const supabase = createAuthenticatedClient(accessToken) || await createSupabaseServerClient();
   
+  // Update note in database
   const { data, error } = await supabase
     .from('notes')
     .update({
@@ -131,28 +167,126 @@ export async function updateNoteForUser(
     throw new Error('Note updated but no data returned');
   }
 
+  // Re-extract and update phrases (non-blocking)
+  try {
+    // Delete existing note-phrase links
+    await supabase
+      .from('note_phrases')
+      .delete()
+      .eq('note_id', noteId);
+
+    // Extract new phrases
+    const phrases = extractPhrases(textForEmbedding);
+    if (phrases.length > 0) {
+      // Store new phrases
+      await storePhrasesForNote(userId, noteId, phrases, accessToken);
+    }
+  } catch (error) {
+    // Log but don't throw - phrase extraction failures shouldn't prevent note update
+    console.error('Error updating phrases for note (non-blocking):', error);
+  }
+
   return data as Note;
 }
 
 /**
- * List all notes for a user, ordered by most recent first
+ * List all notes for a user, optionally filtered by folder or parent note
  * @param accessToken - Optional access token for authenticated requests (required for RLS)
  */
-export async function listNotesForUser(userId: string, accessToken?: string): Promise<Note[]> {
+export async function listNotesForUser(
+  userId: string,
+  folderId?: string | null,
+  parentNoteId?: string | null,
+  accessToken?: string
+): Promise<Note[]> {
   const supabase = createAuthenticatedClient(accessToken) || await createSupabaseServerClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('notes')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', userId);
+
+  if (folderId !== undefined) {
+    if (folderId === null) {
+      query = query.is('folder_id', null).is('parent_note_id', null);
+    } else {
+      query = query.eq('folder_id', folderId);
+    }
+  } else if (parentNoteId !== undefined) {
+    if (parentNoteId === null) {
+      query = query.is('parent_note_id', null);
+    } else {
+      query = query.eq('parent_note_id', parentNoteId);
+    }
+  }
+
+  const { data, error } = await query
+    .order('position', { ascending: true })
     .order('created_at', { ascending: false });
 
   if (error) {
     console.error('Error listing notes:', error);
+    // Check if position or folder_id columns don't exist
+    if (error.message.includes('column') && error.message.includes('does not exist')) {
+      throw new Error('Notes table missing folder_id, parent_note_id, or position columns. Please run the database migration in supabase/schema.sql');
+    }
     throw new Error(`Failed to list notes: ${error.message}`);
   }
 
   return (data || []) as Note[];
+}
+
+/**
+ * Get all child notes of a specific note
+ */
+export async function getChildNotesForNote(
+  noteId: string,
+  userId: string,
+  accessToken?: string
+): Promise<Note[]> {
+  return listNotesForUser(userId, undefined, noteId, accessToken);
+}
+
+/**
+ * Update a note's parent (folder or note) and position
+ */
+export async function updateNotePosition(
+  noteId: string,
+  userId: string,
+  folderId: string | null,
+  parentNoteId: string | null,
+  position: number,
+  accessToken?: string
+): Promise<Note> {
+  // Validate: note cannot be in both folder and under another note
+  if (folderId && parentNoteId) {
+    throw new Error('Note cannot be in both a folder and nested under another note');
+  }
+
+  const supabase = createAuthenticatedClient(accessToken) || await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from('notes')
+    .update({
+      folder_id: folderId,
+      parent_note_id: parentNoteId,
+      position: position,
+    })
+    .eq('id', noteId)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating note position:', error);
+    throw new Error(`Failed to update note position: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error('Note position updated but no data returned');
+  }
+
+  return data as Note;
 }
 
 /**

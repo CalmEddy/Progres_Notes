@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { createNoteForUser, listNotesForUser } from '@/lib/notes';
+import { updateNoteForUser, deleteNoteForUser } from '@/lib/notes';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Helper to get session from Authorization header or cookies
+// Helper to get session from request
 async function getSessionFromRequest(request: NextRequest) {
-  // Try to get token from Authorization header first
   const authHeader = request.headers.get('Authorization');
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
@@ -18,7 +17,6 @@ async function getSessionFromRequest(request: NextRequest) {
     }
   }
 
-  // Fallback to cookies
   const cookieHeader = request.headers.get('Cookie');
   if (cookieHeader) {
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -35,8 +33,11 @@ async function getSessionFromRequest(request: NextRequest) {
   return null;
 }
 
-// GET /api/notes - List all notes for the authenticated user
-export async function GET(request: NextRequest) {
+// PUT /api/notes/[id] - Update a note
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getSessionFromRequest(request);
 
@@ -44,19 +45,50 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const notes = await listNotesForUser(session.user.id, session.accessToken);
-    return NextResponse.json(notes);
+    const noteId = params.id;
+
+    if (!noteId) {
+      return NextResponse.json(
+        { error: 'Note ID is required' },
+        { status: 400 }
+      );
+    }
+
+    const body = await request.json();
+    const { title, body: noteBody } = body;
+
+    if (!noteBody || typeof noteBody !== 'string' || noteBody.trim().length === 0) {
+      return NextResponse.json(
+        { error: 'Note body is required and cannot be empty' },
+        { status: 400 }
+      );
+    }
+
+    const updatedNote = await updateNoteForUser(
+      noteId,
+      session.user.id,
+      title || null,
+      noteBody.trim(),
+      session.accessToken
+    );
+
+    return NextResponse.json(updatedNote);
   } catch (error) {
-    console.error('Error listing notes:', error);
+    console.error('Error updating note:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to list notes' },
+      {
+        error: error instanceof Error ? error.message : 'Failed to update note',
+      },
       { status: 500 }
     );
   }
 }
 
-// POST /api/notes - Create a new note
-export async function POST(request: NextRequest) {
+// DELETE /api/notes/[id] - Delete a note
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
   try {
     const session = await getSessionFromRequest(request);
 
@@ -64,39 +96,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await request.json();
-    const { title, body: noteBody, folder_id, parent_note_id, position } = body;
+    const noteId = params.id;
 
-    if (!noteBody || typeof noteBody !== 'string' || noteBody.trim().length === 0) {
+    if (!noteId) {
       return NextResponse.json(
-        { error: 'Note body is required' },
+        { error: 'Note ID is required' },
         { status: 400 }
       );
     }
 
-    // Validate: note cannot be in both folder and under another note
-    if (folder_id && parent_note_id) {
-      return NextResponse.json(
-        { error: 'Note cannot be in both a folder and nested under another note' },
-        { status: 400 }
-      );
-    }
+    await deleteNoteForUser(noteId, session.user.id);
 
-    const note = await createNoteForUser(
-      session.user.id,
-      title || null,
-      noteBody,
-      folder_id !== undefined ? folder_id : null,
-      parent_note_id !== undefined ? parent_note_id : null,
-      position !== undefined ? position : 0,
-      session.accessToken
-    );
-
-    return NextResponse.json(note, { status: 201 });
+    return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error creating note:', error);
+    console.error('Error deleting note:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to create note' },
+      {
+        error: error instanceof Error ? error.message : 'Failed to delete note',
+      },
       { status: 500 }
     );
   }
