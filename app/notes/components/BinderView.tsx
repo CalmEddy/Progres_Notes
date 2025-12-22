@@ -12,6 +12,9 @@ import BinderSidebar from './BinderSidebar';
 import NoteEditor from './NoteEditor';
 import FilterBuilder from './FilterBuilder';
 import FilteredNotesView from './FilteredNotesView';
+import ChunksColumn from './ChunksColumn';
+import ChunkContentColumn from './ChunkContentColumn';
+import { NoteChunk } from '@/lib/chunks/chunking';
 import {
   addItemToTree,
   removeItemFromTree,
@@ -31,6 +34,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
   const [mounted, setMounted] = useState(false);
   const [binderStructure, setBinderStructure] = useState<BinderItem[]>([]);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
+  const [selectedChunk, setSelectedChunk] = useState<NoteChunk | null>(null);
   const [selectedFilterFolder, setSelectedFilterFolder] = useState<FilterFolder | null>(null);
   const [childNotes, setChildNotes] = useState<Note[]>([]);
   const [notePhrases, setNotePhrases] = useState<Record<string, Phrase[]>>({});
@@ -50,20 +54,64 @@ export default function BinderView({ userEmail }: BinderViewProps) {
 
   // Check session on client side
   useEffect(() => {
+    let isMounted = true;
+    let timeoutId: NodeJS.Timeout | null = null;
+    
     const checkSession = async () => {
-      const supabase = createSupabaseClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        console.log('No client session, redirecting to login');
-        router.push('/auth/login');
-        return;
+      try {
+        // Use a timeout to prevent hanging - proceed after 2 seconds max
+        timeoutId = setTimeout(() => {
+          if (isMounted) {
+            console.warn('Session check timeout, proceeding anyway');
+            setMounted(true);
+          }
+        }, 2000);
+        
+        const supabase = createSupabaseClient();
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        
+        if (!isMounted) return;
+        
+        if (error) {
+          console.error('Error getting session:', error);
+          // Proceed anyway - API calls will handle auth
+          setMounted(true);
+          return;
+        }
+        
+        if (!session) {
+          console.log('No client session, redirecting to login');
+          router.push('/auth/login');
+          return;
+        }
+        
+        setMounted(true);
+      } catch (err) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        console.error('Error checking session:', err);
+        // If session check fails, proceed anyway (might be a network issue)
+        // The API calls will handle auth errors
+        if (isMounted) {
+          setMounted(true);
+        }
       }
-      
-      setMounted(true);
     };
     
     checkSession();
+    
+    return () => {
+      isMounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
   }, [router]);
 
   // Load binder structure after session is verified
@@ -218,6 +266,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
 
   const handleNoteSelect = useCallback(async (note: Note) => {
     setSelectedNote(note);
+    setSelectedChunk(null); // Clear chunk selection when note changes
     setSelectedFilterFolder(null); // Clear filter folder selection
     // Clear child notes immediately to avoid showing stale data
     setChildNotes([]);
@@ -246,6 +295,10 @@ export default function BinderView({ userEmail }: BinderViewProps) {
     }
   }, [loadPhrasesForNote, loadTagsForNote]);
 
+  const handleChunkSelect = useCallback((chunk: NoteChunk) => {
+    setSelectedChunk(chunk);
+  }, []);
+
   const handleFilterFolderClick = useCallback(async (filterFolderId: string) => {
     try {
       const headers = await getAuthHeaders();
@@ -254,6 +307,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         const folder = await response.json();
         setSelectedFilterFolder(folder);
         setSelectedNote(null); // Clear note selection
+        setSelectedChunk(null); // Clear chunk selection
         setShowFilterBuilder(false); // Hide builder if open
       } else {
         console.error('Error loading filter folder:', response.statusText);
@@ -273,6 +327,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         setShowFilterBuilder(true);
         setSelectedFilterFolder(null);
         setSelectedNote(null);
+        setSelectedChunk(null);
       }
     } catch (err) {
       console.error('Error loading filter folder for edit:', err);
@@ -606,9 +661,9 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content - Miller Columns Layout */}
       <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* Sidebar */}
+        {/* Column 1: Notes (BinderSidebar) */}
         <BinderSidebar
           binderStructure={binderStructure}
           selectedNoteId={selectedNote?.id || null}
@@ -625,9 +680,18 @@ export default function BinderView({ userEmail }: BinderViewProps) {
           error={error}
         />
 
-        {/* Editor / Filtered View / Filter Builder */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {showFilterBuilder ? (
+        {/* Column 2: Chunks (shown when note is selected and not showing filter/filtered view) */}
+        {selectedNote && !showFilterBuilder && !selectedFilterFolder && (
+          <ChunksColumn
+            noteId={selectedNote.id}
+            selectedChunkId={selectedChunk?.id || null}
+            onChunkSelect={handleChunkSelect}
+          />
+        )}
+
+        {/* Column 3: Content (Chunk Content, Note Editor, Filter Builder, or Filtered View) */}
+        {showFilterBuilder ? (
+          <div className="flex-1 flex flex-col overflow-hidden bg-white">
             <div className="h-full overflow-y-auto p-6 bg-gray-50">
               <FilterBuilder
                 onSave={handleSaveFilterFolder}
@@ -639,13 +703,19 @@ export default function BinderView({ userEmail }: BinderViewProps) {
                 initialConditions={editingFilterFolder?.filter_conditions}
               />
             </div>
-          ) : selectedFilterFolder ? (
+          </div>
+        ) : selectedFilterFolder ? (
+          <div className="flex-1 flex flex-col overflow-hidden bg-white">
             <FilteredNotesView
               filterFolder={selectedFilterFolder}
               onNoteSelect={handleNoteSelect}
               onClose={() => setSelectedFilterFolder(null)}
             />
-          ) : (
+          </div>
+        ) : selectedChunk ? (
+          <ChunkContentColumn chunk={selectedChunk} />
+        ) : selectedNote ? (
+          <div className="flex-1 flex flex-col overflow-hidden bg-white">
             <NoteEditor
               note={selectedNote}
               childNotes={childNotes}
@@ -674,8 +744,15 @@ export default function BinderView({ userEmail }: BinderViewProps) {
               onNoteSelect={handleNoteSelect}
               onCreateChildNote={handleCreateChildNote}
             />
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center bg-white">
+            <div className="text-center text-gray-500">
+              <p className="text-lg mb-2">Select a note to begin</p>
+              <p className="text-sm">Choose a note from the sidebar to view its chunks and content</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
