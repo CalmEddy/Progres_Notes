@@ -2,6 +2,7 @@ import { createSupabaseServerClient } from './supabaseServerClient';
 import { createClient } from '@supabase/supabase-js';
 import { listFoldersForUser } from './folders';
 import { listNotesForUser, updateNotePosition, Note } from './notes';
+import { listFilterFoldersForUser } from './filters/filterFolders';
 import { Folder, BinderItem, BinderStructure } from './binder/types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -31,12 +32,25 @@ export async function getBinderStructureForUser(
   try {
     const folders = await listFoldersForUser(userId, accessToken);
     const notes = await listNotesForUser(userId, undefined, undefined, accessToken);
+    
+    // Try to load filter folders, but don't fail if table doesn't exist yet
+    let filterFolders = [];
+    try {
+      filterFolders = await listFilterFoldersForUser(userId, accessToken);
+    } catch (error) {
+      // If table doesn't exist, just log and continue with empty array
+      if (error instanceof Error && error.message.includes('filter_folders')) {
+        console.warn('Filter folders table not found. Please run the schema migration.');
+      } else {
+        throw error; // Re-throw if it's a different error
+      }
+    }
 
   // Create maps for quick lookup
   const folderMap = new Map<string, Folder>();
   folders.forEach(folder => folderMap.set(folder.id, folder));
 
-  // Create BinderItem for each folder and note
+  // Create BinderItem for each folder, note, and filter folder
   const folderItems = folders.map(folder => ({
     id: folder.id,
     type: 'folder' as const,
@@ -45,6 +59,17 @@ export async function getBinderStructureForUser(
     parent_type: folder.parent_id ? 'folder' as const : null,
     position: folder.position,
     folder: folder,
+    children: [] as BinderItem[],
+  }));
+
+  const filterFolderItems = filterFolders.map(filterFolder => ({
+    id: filterFolder.id,
+    type: 'filter_folder' as const,
+    name: filterFolder.name,
+    parent_id: null, // Filter folders always at root
+    parent_type: null,
+    position: filterFolder.position,
+    filterFolder: filterFolder,
     children: [] as BinderItem[],
   }));
 
@@ -77,7 +102,7 @@ export async function getBinderStructureForUser(
   });
 
   // Combine all items
-  const allItems = [...folderItems, ...noteItems];
+  const allItems = [...folderItems, ...filterFolderItems, ...noteItems];
 
   // Build tree structure
   const itemMap = new Map<string, BinderItem>();
@@ -106,9 +131,22 @@ export async function getBinderStructureForUser(
     }
   });
 
-  // Sort by position
+  // Sort items: filter folders first, then folders, then notes
   const sortItems = (items: BinderItem[]) => {
-    items.sort((a, b) => a.position - b.position);
+    items.sort((a, b) => {
+      // Filter folders always come first
+      if (a.type === 'filter_folder' && b.type !== 'filter_folder') return -1;
+      if (b.type === 'filter_folder' && a.type !== 'filter_folder') return 1;
+      // If both are filter folders, sort by position
+      if (a.type === 'filter_folder' && b.type === 'filter_folder') {
+        return a.position - b.position;
+      }
+      // Folders come before notes
+      if (a.type === 'folder' && b.type === 'note') return -1;
+      if (b.type === 'folder' && a.type === 'note') return 1;
+      // Within same type, sort by position
+      return a.position - b.position;
+    });
     items.forEach(item => {
       if (item.children) {
         sortItems(item.children);

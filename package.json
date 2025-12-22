@@ -9,6 +9,7 @@
     "lint": "next lint",
     "extract-notion-blogs": "tsx scripts/extractNotionBlogs.ts",
     "backfill-phrases": "tsx scripts/backfillPhrases.ts",
+    "backfill-chunks": "tsx scripts/backfillChunks.ts",
     "test-nlp": "tsx scripts/testNLP.ts"
   },
   "dependencies": {

@@ -1,4 +1,5 @@
 import { Note } from '@/lib/notes';
+import { FilterFolder } from '@/lib/filters/types';
 
 export interface Folder {
   id: string;
@@ -12,13 +13,14 @@ export interface Folder {
 
 export interface BinderItem {
   id: string;
-  type: 'folder' | 'note';
+  type: 'folder' | 'note' | 'filter_folder';
   name: string;
   parent_id: string | null;
   parent_type: 'folder' | 'note' | null;
   position: number;
   note?: Note;
   folder?: Folder;
+  filterFolder?: FilterFolder;
   children?: BinderItem[];
   expanded?: boolean;
 }

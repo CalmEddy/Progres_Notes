@@ -2,6 +2,7 @@
 
 import { BinderItem as BinderItemType } from '@/lib/binder/types';
 import { Note } from '@/lib/notes';
+import { Tag } from '@/lib/tags/types';
 import BinderItem from './BinderItem';
 
 interface BinderTreeProps {
@@ -9,9 +10,17 @@ interface BinderTreeProps {
   selectedNoteId: string | null;
   expandedFolders: Set<string>;
   searchQuery: string;
+  noteTags?: Record<string, Tag[]>;
   onNoteSelect: (note: Note) => void;
+  onFilterFolderClick?: (filterFolderId: string) => void;
+  onFilterFolderEdit?: (filterFolderId: string) => void;
   onToggleFolder: (folderId: string) => void;
   onStructureChange: () => void;
+  onStructureUpdate?: (
+    updateFn: (current: BinderItemType[]) => BinderItemType[],
+    syncFn: () => Promise<Response>,
+    errorMessage?: string
+  ) => Promise<void>;
   level?: number;
 }
 
@@ -20,9 +29,13 @@ export default function BinderTree({
   selectedNoteId,
   expandedFolders,
   searchQuery,
+  noteTags = {},
   onNoteSelect,
+  onFilterFolderClick,
+  onFilterFolderEdit,
   onToggleFolder,
   onStructureChange,
+  onStructureUpdate,
   level = 0,
 }: BinderTreeProps) {
   // Filter items based on search query
@@ -83,9 +96,13 @@ export default function BinderTree({
               expanded={isExpanded}
               searchQuery={searchQuery}
               level={level}
+              tags={item.type === 'note' && item.note ? (noteTags[item.note.id] || []) : undefined}
               onNoteSelect={onNoteSelect}
+              onFilterFolderClick={onFilterFolderClick}
+              onFilterFolderEdit={onFilterFolderEdit}
               onToggleFolder={onToggleFolder}
               onStructureChange={onStructureChange}
+              onStructureUpdate={onStructureUpdate}
             />
             {isExpanded && item.children && item.children.length > 0 && (
               <BinderTree
@@ -93,9 +110,13 @@ export default function BinderTree({
                 selectedNoteId={selectedNoteId}
                 expandedFolders={expandedFolders}
                 searchQuery={searchQuery}
+                noteTags={noteTags}
                 onNoteSelect={onNoteSelect}
+                onFilterFolderClick={onFilterFolderClick}
+                onFilterFolderEdit={onFilterFolderEdit}
                 onToggleFolder={onToggleFolder}
                 onStructureChange={onStructureChange}
+                onStructureUpdate={onStructureUpdate}
                 level={level + 1}
               />
             )}

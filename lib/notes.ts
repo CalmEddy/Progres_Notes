@@ -3,6 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 import { generateEmbedding } from './embeddings';
 import { extractPhrases } from './phrases/phraseExtractor';
 import { storePhrasesForNote } from './phrases/phraseStorage';
+import { createChunksForNote } from './chunks/chunking';
+import { generateEmbeddingsForNoteChunks } from './chunks/embeddingService';
+import { generateThemeForNote } from './themes/themeGeneration';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -99,6 +102,14 @@ export async function createNoteForUser(
     throw new Error('Note created but no data returned');
   }
 
+  // Chunk the note body (synchronous - must complete before returning)
+  try {
+    await createChunksForNote(data.id, body.trim(), accessToken);
+  } catch (error) {
+    // Log but don't throw - chunking failures shouldn't prevent note creation
+    console.error('Error chunking note (non-blocking):', error);
+  }
+
   // Extract and store phrases (non-blocking - don't fail note creation if this fails)
   try {
     const textToExtract = textForEmbedding;
@@ -115,6 +126,29 @@ export async function createNoteForUser(
     // Log but don't throw - phrase extraction failures shouldn't prevent note creation
     console.error('Error extracting phrases for note (non-blocking):', error);
   }
+
+  // Generate embeddings and themes asynchronously (non-blocking)
+  generateEmbeddingsForNoteChunks(data.id, accessToken)
+    .then(async (count) => {
+      if (count > 0) {
+        // Generate theme after embeddings are created
+        try {
+          await generateThemeForNote(data.id, accessToken, true, data.title);
+        } catch (error) {
+          console.error('Error generating theme for note (non-blocking):', error);
+        }
+      } else {
+        // Even if no new embeddings were generated, check if chunks have embeddings and generate theme
+        try {
+          await generateThemeForNote(data.id, accessToken, true, data.title);
+        } catch (error) {
+          console.error('Error generating theme for note (non-blocking):', error);
+        }
+      }
+    })
+    .catch((error) => {
+      console.error('Error generating embeddings for note (non-blocking):', error);
+    });
 
   return data as Note;
 }
@@ -167,6 +201,14 @@ export async function updateNoteForUser(
     throw new Error('Note updated but no data returned');
   }
 
+  // Re-chunk the note body (synchronous - must complete before returning)
+  try {
+    await createChunksForNote(noteId, body.trim(), accessToken);
+  } catch (error) {
+    // Log but don't throw - chunking failures shouldn't prevent note update
+    console.error('Error chunking note (non-blocking):', error);
+  }
+
   // Re-extract and update phrases (non-blocking)
   try {
     // Delete existing note-phrase links
@@ -185,6 +227,20 @@ export async function updateNoteForUser(
     // Log but don't throw - phrase extraction failures shouldn't prevent note update
     console.error('Error updating phrases for note (non-blocking):', error);
   }
+
+  // Generate embeddings and themes asynchronously (non-blocking)
+  generateEmbeddingsForNoteChunks(noteId, accessToken)
+    .then(async (count) => {
+      // Regenerate theme after embeddings are created/updated (even if no new embeddings)
+      try {
+        await generateThemeForNote(noteId, accessToken, true, data.title); // Preserve user-modified labels
+      } catch (error) {
+        console.error('Error regenerating theme for note (non-blocking):', error);
+      }
+    })
+    .catch((error) => {
+      console.error('Error generating embeddings for note (non-blocking):', error);
+    });
 
   return data as Note;
 }
@@ -328,6 +384,34 @@ export async function searchNotesForUser(
   ) as NoteWithSimilarity[];
 
   return userNotes;
+}
+
+/**
+ * Get a note by ID
+ */
+export async function getNoteById(
+  noteId: string,
+  userId: string,
+  accessToken?: string
+): Promise<Note | null> {
+  const supabase = createAuthenticatedClient(accessToken) || await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from('notes')
+    .select('*')
+    .eq('id', noteId)
+    .eq('user_id', userId)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      return null; // Not found
+    }
+    console.error('Error getting note:', error);
+    throw new Error(`Failed to get note: ${error.message}`);
+  }
+
+  return data as Note;
 }
 
 /**

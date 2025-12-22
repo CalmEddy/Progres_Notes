@@ -3,15 +3,20 @@
 import { useState, useEffect } from 'react';
 import { Note } from '@/lib/notes';
 import { Phrase } from '@/lib/phrases/types';
+import { Tag } from '@/lib/tags/types';
 import PhraseTags from './PhraseTags';
 import EditNoteModal from './EditNoteModal';
 import NoteChildrenView from './NoteChildrenView';
+import TagChip from './TagChip';
+import TagSelector from './TagSelector';
 
 interface NoteEditorProps {
   note: Note | null;
   childNotes?: Note[];
   phrases?: Phrase[];
+  tags?: Tag[];
   onEdit?: (noteId: string, title: string | null, body: string) => Promise<void>;
+  onTagsChange?: (noteId: string, tagIds: string[]) => Promise<void>;
   onPhraseClick?: (phrase: Phrase) => void;
   onNoteSelect?: (note: Note) => void;
   onCreateChildNote?: () => void;
@@ -21,13 +26,24 @@ export default function NoteEditor({
   note,
   childNotes = [],
   phrases = [],
+  tags = [],
   onEdit,
+  onTagsChange,
   onPhraseClick,
   onNoteSelect,
   onCreateChildNote,
 }: NoteEditorProps) {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'content' | 'children' | null>(null);
+  const [isEditingTags, setIsEditingTags] = useState(false);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+
+  // Update selected tag IDs when tags prop changes
+  useEffect(() => {
+    if (note) {
+      setSelectedTagIds(tags.map(tag => tag.id));
+    }
+  }, [tags, note?.id]);
 
   // Reset view mode when note changes
   useEffect(() => {
@@ -87,6 +103,69 @@ export default function NoteEditor({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
                   Updated {new Date(note.updated_at).toLocaleDateString()}
+                </div>
+              )}
+            </div>
+
+            {/* Tags Section */}
+            <div className="mt-3">
+              {!isEditingTags ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {tags.length > 0 ? (
+                    tags.map(tag => (
+                      <TagChip
+                        key={tag.id}
+                        tag={tag}
+                        size="sm"
+                        onClick={() => {
+                          // TODO: Filter by tag
+                          console.log('Filter by tag:', tag.name);
+                        }}
+                      />
+                    ))
+                  ) : null}
+                  {onTagsChange && (
+                    <button
+                      onClick={() => setIsEditingTags(true)}
+                      className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100 transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      {tags.length === 0 ? 'Add tags' : 'Edit tags'}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <TagSelector
+                    selectedTagIds={selectedTagIds}
+                    onSelectionChange={async (newTagIds) => {
+                      setSelectedTagIds(newTagIds);
+                      if (onTagsChange && note) {
+                        try {
+                          await onTagsChange(note.id, newTagIds);
+                          setIsEditingTags(false);
+                        } catch (err) {
+                          console.error('Error updating tags:', err);
+                          // Revert on error
+                          setSelectedTagIds(tags.map(t => t.id));
+                        }
+                      }
+                    }}
+                    placeholder="Type to search or create tags..."
+                  />
+                  <div className="flex justify-end gap-2 mt-2">
+                    <button
+                      onClick={() => {
+                        setSelectedTagIds(tags.map(t => t.id));
+                        setIsEditingTags(false);
+                      }}
+                      className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

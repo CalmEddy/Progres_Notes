@@ -5,14 +5,25 @@ import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, u
 import { createSupabaseClient } from '@/lib/supabaseClient';
 import { BinderItem } from '@/lib/binder/types';
 import { Note } from '@/lib/notes';
+import { Tag } from '@/lib/tags/types';
 import BinderTree from './BinderTree';
 import BinderSearch from './BinderSearch';
+import { moveItemInTree, createBinderItemFromFolder, addItemToTree } from '../utils/binderStateUtils';
 
 interface BinderSidebarProps {
   binderStructure: BinderItem[];
   selectedNoteId: string | null;
+  noteTags?: Record<string, Tag[]>;
   onNoteSelect: (note: Note) => void;
+  onCreateFilterFolder?: () => void;
+  onFilterFolderClick?: (filterFolderId: string) => void;
+  onFilterFolderEdit?: (filterFolderId: string) => void;
   onStructureChange: () => void;
+  onStructureUpdate?: (
+    updateFn: (current: BinderItem[]) => BinderItem[],
+    syncFn: () => Promise<Response>,
+    errorMessage?: string
+  ) => Promise<void>;
   collapsed: boolean;
   onToggleCollapse: () => void;
   loading: boolean;
@@ -22,8 +33,13 @@ interface BinderSidebarProps {
 export default function BinderSidebar({
   binderStructure,
   selectedNoteId,
+  noteTags = {},
   onNoteSelect,
+  onCreateFilterFolder,
+  onFilterFolderClick,
+  onFilterFolderEdit,
   onStructureChange,
+  onStructureUpdate,
   collapsed,
   onToggleCollapse,
   loading,
@@ -56,24 +72,53 @@ export default function BinderSidebar({
         headers['Authorization'] = `Bearer ${session.access_token}`;
       }
 
-      const response = await fetch('/api/folders', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ name: name.trim() }),
-      });
+      const folderName = name.trim();
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        alert(errorData.error || 'Failed to create folder');
-        return;
+      // Create temporary folder for optimistic update
+      const tempId = `temp-${Date.now()}`;
+      const tempFolder = {
+        id: tempId,
+        user_id: session.user.id,
+        name: folderName,
+        parent_id: null,
+        position: binderStructure.filter(item => !item.parent_id).length,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      // Optimistically add folder to tree
+      const tempItem = createBinderItemFromFolder(tempFolder);
+      if (onStructureUpdate) {
+        await onStructureUpdate(
+          (current) => addItemToTree(current, tempItem, null, null),
+          () =>
+            fetch('/api/folders', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ name: folderName }),
+            }),
+          'Failed to create folder'
+        );
+      } else {
+        // Fallback to old behavior
+        const response = await fetch('/api/folders', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ name: folderName }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          alert(errorData.error || 'Failed to create folder');
+          return;
+        }
+        onStructureChange();
       }
-
-      onStructureChange();
     } catch (err) {
       console.error('Error creating folder:', err);
-      alert('Failed to create folder');
+      // Error is already handled by onStructureUpdate
     }
-  }, [onStructureChange]);
+  }, [binderStructure, onStructureChange, onStructureUpdate]);
 
   const handleToggleFolder = useCallback((folderId: string) => {
     setExpandedFolders(prev => {
@@ -118,11 +163,16 @@ export default function BinderSidebar({
     return null;
   }, []);
 
+  // Re-export findItemById for use in handleDragStart (it needs access to current binderStructure)
+  const findItemByIdInCurrentStructure = useCallback((id: string) => {
+    return findItemById(binderStructure, id);
+  }, [binderStructure, findItemById]);
+
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(event.active.id as string);
-    const item = findItemById(binderStructure, event.active.id as string);
+    const item = findItemByIdInCurrentStructure(event.active.id as string);
     setDraggedItem(item);
-  }, [binderStructure, findItemById]);
+  }, [findItemByIdInCurrentStructure]);
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     setActiveId(null);
@@ -131,20 +181,28 @@ export default function BinderSidebar({
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const draggedItem = findItemById(binderStructure, active.id as string);
+    const draggedItem = findItemByIdInCurrentStructure(active.id as string);
     if (!draggedItem) return;
+
+    // Prevent filter folders from being moved (they should always stay at root)
+    if (draggedItem.type === 'filter_folder') {
+      return;
+    }
 
     // Find target (could be a folder, note, or the root)
     let targetFolderId: string | null = null;
     let targetNoteId: string | null = null;
+    let targetParentType: 'folder' | 'note' | null = null;
     
     if (over.id !== 'root') {
-      const targetItem = findItemById(binderStructure, over.id as string);
+      const targetItem = findItemByIdInCurrentStructure(over.id as string);
       if (targetItem) {
         if (targetItem.type === 'folder') {
           targetFolderId = targetItem.id;
+          targetParentType = 'folder';
         } else if (targetItem.type === 'note') {
           targetNoteId = targetItem.id;
+          targetParentType = 'note';
         }
       }
     }
@@ -185,31 +243,60 @@ export default function BinderSidebar({
         newPosition = rootItems.length;
       }
 
-      if (draggedItem.type === 'folder') {
-        await fetch(`/api/folders/${draggedItem.id}/move`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ parent_id: targetFolderId, position: newPosition }),
-        });
-      } else {
-        // Note: can be moved to folder or note
-        await fetch(`/api/notes/${draggedItem.id}/move`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ 
-            folder_id: targetFolderId !== null ? targetFolderId : undefined,
-            parent_note_id: targetNoteId !== null ? targetNoteId : undefined,
-            position: newPosition 
-          }),
-        });
-      }
+      if (onStructureUpdate) {
+        // Use optimistic update
+        const itemId = draggedItem.id;
+        const newParentId = targetFolderId || targetNoteId || null;
 
-      onStructureChange();
+        await onStructureUpdate(
+          (current) => moveItemInTree(current, itemId, newParentId, targetParentType, newPosition),
+          () => {
+            if (draggedItem.type === 'folder') {
+              return fetch(`/api/folders/${itemId}/move`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ parent_id: targetFolderId, position: newPosition }),
+              });
+            } else {
+              return fetch(`/api/notes/${itemId}/move`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ 
+                  folder_id: targetFolderId !== null ? targetFolderId : undefined,
+                  parent_note_id: targetNoteId !== null ? targetNoteId : undefined,
+                  position: newPosition 
+                }),
+              });
+            }
+          },
+          'Failed to move item'
+        );
+      } else {
+        // Fallback to old behavior
+        if (draggedItem.type === 'folder') {
+          await fetch(`/api/folders/${draggedItem.id}/move`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ parent_id: targetFolderId, position: newPosition }),
+          });
+        } else {
+          await fetch(`/api/notes/${draggedItem.id}/move`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ 
+              folder_id: targetFolderId !== null ? targetFolderId : undefined,
+              parent_note_id: targetNoteId !== null ? targetNoteId : undefined,
+              position: newPosition 
+            }),
+          });
+        }
+        onStructureChange();
+      }
     } catch (err) {
       console.error('Error moving item:', err);
-      alert('Failed to move item');
+      // Error is already handled by onStructureUpdate
     }
-  }, [binderStructure, findItemById, onStructureChange]);
+  }, [binderStructure, findItemByIdInCurrentStructure, onStructureChange, onStructureUpdate]);
 
   if (collapsed) {
     return (
@@ -270,7 +357,7 @@ export default function BinderSidebar({
       </div>
 
       {/* Actions */}
-      <div className="px-4 py-2 border-b border-gray-200 flex-shrink-0">
+      <div className="px-4 py-2 border-b border-gray-200 flex-shrink-0 space-y-2">
         <button
           onClick={handleCreateFolder}
           className="w-full px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2"
@@ -280,10 +367,21 @@ export default function BinderSidebar({
           </svg>
           New Folder
         </button>
+        {onCreateFilterFolder && (
+          <button
+            onClick={onCreateFilterFolder}
+            className="w-full px-3 py-2 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+            New Filter Folder
+          </button>
+        )}
       </div>
 
       {/* Tree */}
-      <DroppableRoot>
+      <DroppableRoot activeId={activeId}>
         <DndContext
           sensors={sensors}
           onDragStart={handleDragStart}
@@ -308,26 +406,33 @@ export default function BinderSidebar({
               selectedNoteId={selectedNoteId}
               expandedFolders={expandedFolders}
               searchQuery={searchQuery}
+              noteTags={noteTags}
               onNoteSelect={onNoteSelect}
+              onFilterFolderClick={onFilterFolderClick}
+              onFilterFolderEdit={onFilterFolderEdit}
               onToggleFolder={handleToggleFolder}
               onStructureChange={onStructureChange}
+              onStructureUpdate={onStructureUpdate}
             />
           )}
           <DragOverlay>
             {draggedItem && (
-              <div className="px-2 py-1.5 bg-white border border-gray-200 rounded shadow-lg flex items-center gap-2">
+              <div className="px-3 py-2 bg-white border-2 border-blue-500 rounded-lg shadow-xl flex items-center gap-2 opacity-90">
                 <div className="w-4 flex-shrink-0">
                   {draggedItem.type === 'folder' ? (
-                    <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
                     </svg>
                   ) : (
-                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                   )}
                 </div>
-                <span className="text-sm text-gray-700">{draggedItem.name}</span>
+                <span className="text-sm font-medium text-gray-900">{draggedItem.name}</span>
+                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                  {draggedItem.type === 'folder' ? 'Folder' : 'Note'}
+                </span>
               </div>
             )}
           </DragOverlay>
@@ -338,7 +443,13 @@ export default function BinderSidebar({
 }
 
 // Component to make root area droppable
-function DroppableRoot({ children }: { children: React.ReactNode }) {
+function DroppableRoot({ 
+  children, 
+  activeId 
+}: { 
+  children: React.ReactNode;
+  activeId: string | null;
+}) {
   const { setNodeRef, isOver } = useDroppable({
     id: 'root',
     data: {
@@ -346,12 +457,43 @@ function DroppableRoot({ children }: { children: React.ReactNode }) {
     },
   });
 
+  const isDragging = activeId !== null;
+
   return (
     <div
       ref={setNodeRef}
-      className={`flex-1 overflow-y-auto min-h-0 ${isOver ? 'bg-blue-50' : ''}`}
+      className="flex-1 overflow-y-auto min-h-0 relative"
     >
-      {children}
+      {/* Visible root drop zone that appears when dragging */}
+      {isDragging && (
+        <div
+          className={`
+            sticky top-0 z-10 mx-2 mt-2 mb-2 px-3 py-2 rounded-lg border-2 border-dashed
+            transition-all duration-200
+            ${isOver 
+              ? 'bg-blue-100 border-blue-500 shadow-md' 
+              : 'bg-gray-50 border-gray-300 opacity-60'
+            }
+          `}
+        >
+          <div className="flex items-center gap-2 text-sm">
+            <svg 
+              className={`w-4 h-4 ${isOver ? 'text-blue-600' : 'text-gray-400'}`} 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            <span className={isOver ? 'font-medium text-blue-900' : 'text-gray-600'}>
+              {isOver ? 'Drop here to move to root level' : 'Move to root level'}
+            </span>
+          </div>
+        </div>
+      )}
+      <div className={isDragging && !isOver ? 'opacity-40' : ''}>
+        {children}
+      </div>
     </div>
   );
 }
