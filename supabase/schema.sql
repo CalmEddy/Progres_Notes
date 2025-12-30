@@ -212,13 +212,14 @@ create policy "Users can delete own folders"
   for delete
   using (auth.uid() = user_id);
 
--- Add folder_id, position, and parent_note_id columns to notes table
+-- Add folder_id, position, parent_note_id, and diagnostics columns to notes table
 alter table notes 
   add column if not exists folder_id uuid references folders(id) on delete set null,
   add column if not exists position integer default 0 not null,
   add column if not exists parent_note_id uuid references notes(id) on delete cascade,
   add column if not exists conversation_id uuid references notes(id) on delete set null,
-  add column if not exists is_conversation boolean default false not null;
+  add column if not exists is_conversation boolean default false not null,
+  add column if not exists diagnostics jsonb;
 
 -- Create index on folder_id for faster queries
 create index if not exists notes_folder_id_idx on notes(folder_id);
