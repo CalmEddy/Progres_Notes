@@ -10,7 +10,10 @@ function createKernel(overrides: Partial<JokeKernel>): JokeKernel {
     mechanism: 'LITERALISM',
     stance: 'annoyed',
     anchor: 'parking meter',
-    setup: 'The parking meter hates my car but loves my wallet',
+    signal: 'feed the meter',
+    misread: 'treat the meter like a pet',
+    consequence: 'meter expects ongoing care',
+    setup: 'I tried to "feed the meter" and it started expecting daily walks',
     punch: 'It charged rent and now expects tips',
     ...overrides,
   };
@@ -56,6 +59,9 @@ function testSelectionDiversity() {
       kernel: createKernel({
         id: 'k1',
         mechanism: 'LITERALISM',
+        signal: 'has opinions',
+        misread: 'fridge thinks and judges',
+        consequence: 'fridge acts like therapist',
         setup: baseSetup,
         punch: basePunch,
       }),
@@ -66,6 +72,9 @@ function testSelectionDiversity() {
       kernel: createKernel({
         id: 'k2',
         mechanism: 'STATUS_FLIP',
+        signal: 'intern scheduling meetings',
+        misread: 'intern is the boss now',
+        consequence: 'I need permission for everything',
         setup: 'The intern started scheduling my meetings',
         punch: 'Now I need approval to use my own desk',
       }),
@@ -76,6 +85,9 @@ function testSelectionDiversity() {
       kernel: createKernel({
         id: 'k3',
         mechanism: 'RULE_OF_THREE',
+        signal: 'packed for DMV',
+        misread: 'treating wait like adventure',
+        consequence: 'optimism dies first',
         setup: 'I packed snacks, a map, and optimism for the DMV',
         punch: 'Only one of those survived the wait',
       }),
@@ -86,6 +98,9 @@ function testSelectionDiversity() {
       kernel: createKernel({
         id: 'k4',
         mechanism: 'LITERALISM',
+        signal: 'needed space',
+        misread: 'wants physical space',
+        consequence: 'phone takes vacation',
         setup: 'My phone said it needed space',
         punch: 'So it took a weekend trip without me',
       }),

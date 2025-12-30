@@ -47,6 +47,10 @@ function sanitizeJsonString(jsonText: string): string {
   // Catch property names after commas with newlines
   jsonText = jsonText.replace(/(,\s*\n\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
   
+  // Step 4b: Fix property names that have newline between name and colon
+  // Pattern: "propertyName"\n : or "propertyName" \n:
+  jsonText = jsonText.replace(/"([a-zA-Z_][a-zA-Z0-9_]*)"\s*\n\s*:/g, '"$1":');
+  
   // Step 5: Fix unquoted string values using regex (simpler and more reliable)
   // Pattern: ": unquoted_text (where text starts with letter and continues to comma/brace)
   jsonText = jsonText.replace(/":\s+([A-Za-z][A-Za-z0-9_\s]*?)(\s*[,}\]])/g, (match, value, ending) => {
@@ -121,11 +125,40 @@ function sanitizeJsonString(jsonText: string): string {
     }
   }
   
-  // Step 7: Remove trailing commas
+  // Step 7: Fix missing commas between array elements
+  // Pattern: "value" "value" -> "value", "value" (but only inside arrays)
+  // Be careful - only fix if we're clearly in an array context
+  // Use RegExp constructor to avoid quote escaping issues
+  result = result.replace(new RegExp('(\\]\\s*")\\s*"', 'g'), '$1, "'); // After closing bracket, before string
+  result = result.replace(new RegExp('"\\s*"\\s*([,\\]])', 'g'), '", "$1'); // String followed by string then comma/bracket
+  
+  // Step 8: Fix missing commas before closing array bracket
+  // Pattern: value ] -> value, ] (but be careful not to break valid JSON)
+  // Only add comma if there's a value-like pattern before ]
+  result = result.replace(/([^,\s[\]{}])\s*(\])/g, (match, before, bracket) => {
+    // Don't add comma if before is already a closing bracket/brace
+    if (before === '}' || before === ']' || before === ',') {
+      return match;
+    }
+    return before + ', ' + bracket;
+  });
+  
+  // Step 9: Remove trailing commas (do this after fixing array issues)
   result = result.replace(/,(\s*[}\]])/g, '$1');
   
-  // Step 8: Normalize whitespace around colons
+  // Step 10: Normalize whitespace around colons
   result = result.replace(/:\s{2,}/g, ': ');
+  
+  // Step 11: Fix missing commas between object/array elements
+  // Pattern: } { -> }, { (objects in array) - be more aggressive with whitespace
+  // This handles cases like: }\n{ or }  { or }\n  { - must have at least one whitespace char
+  result = result.replace(/}\s+{/g, '}, {');
+  // Pattern: ] [ -> ], [ (arrays in array - less common but possible)
+  result = result.replace(/\]\s+\[/g, '], [');
+  
+  // Step 12: Additional pass to fix } followed by newline and { (common in formatted JSON)
+  // This catches cases where the regex above might have missed due to complex whitespace
+  result = result.replace(/}\s*\n\s*{/g, '},\n  {');
   
   return result;
 }
@@ -174,7 +207,7 @@ export async function generateKernels(
         top_p: 0.95,
         presence_penalty: 0.5,
         frequency_penalty: 0.2,
-        max_tokens: 2000,
+        max_tokens: 3000,
       });
 
       const outputText = completion.choices[0]?.message?.content || '';
@@ -233,6 +266,11 @@ export async function generateKernels(
         if (retryCount === 0) {
           console.log('Attempting aggressive JSON sanitization...');
           
+          // CRITICAL: Fix missing commas between objects in arrays first (most common issue)
+          // This must be done before other sanitization to avoid breaking the structure
+          jsonText = jsonText.replace(/}\s+{/g, '}, {');
+          jsonText = jsonText.replace(/}\s*\n\s*{/g, '},\n  {');
+          
           // Re-run full sanitization
           jsonText = sanitizeJsonString(jsonText);
           
@@ -241,10 +279,35 @@ export async function generateKernels(
           // Re-run curly quote replacement (sometimes they slip through)
           jsonText = normalizeQuotes(jsonText);
           
+          // Fix missing colons after property names (critical fix for this error type)
+          // Fix property names with newlines before colon
+          jsonText = jsonText.replace(/"([a-zA-Z_][a-zA-Z0-9_]*)"\s*\n\s*:/g, '"$1":');
+          
+          // Fix missing colon: "propertyName" value -> "propertyName": value
+          // Look for quoted property name followed by whitespace and then a value token (but no colon)
+          // Fix patterns like: "prop" "value", "prop" 123, "prop" true, "prop" {, "prop" [
+          // Use negative lookahead to avoid matching if colon already exists
+          // Match and capture the value token so we can preserve it
+          jsonText = jsonText.replace(/"([a-zA-Z_][a-zA-Z0-9_]*)"\s+(?!:)([{"\[]|-?\d+\.?\d*|true|false|null)/g, '"$1": $2');
+          
           // Fix unquoted property names more aggressively
           jsonText = jsonText.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
           jsonText = jsonText.replace(/({\s*\n\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
           jsonText = jsonText.replace(/(,\s*\n\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+          
+          // Fix array syntax issues more aggressively
+          // Fix missing commas between array elements
+          jsonText = jsonText.replace(new RegExp('(\\]\\s*")\\s*"', 'g'), '$1, "');
+          jsonText = jsonText.replace(new RegExp('"\\s*"\\s*([,\\]])', 'g'), '", "$1');
+          // Fix missing commas before closing array bracket
+          jsonText = jsonText.replace(/([^,\s[\]{}])\s*(\])/g, (match, before, bracket) => {
+            if (before === '}' || before === ']' || before === ',') {
+              return match;
+            }
+            return before + ', ' + bracket;
+          });
+          // Remove duplicate commas that might have been created
+          jsonText = jsonText.replace(/,\s*,/g, ',');
           
           // Fix unquoted string values using regex
           // Pattern: ": word (where word continues until comma, }, or ])
@@ -272,6 +335,10 @@ export async function generateKernels(
             const escaped = trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
             return ': "' + escaped + '"' + (ending || '');
           });
+          
+          // Final pass: ensure commas between objects (in case sanitizeJsonString didn't catch it)
+          jsonText = jsonText.replace(/}\s+{/g, '}, {');
+          jsonText = jsonText.replace(/}\s*\n\s*{/g, '},\n  {');
           
           try {
             batch = JSON.parse(jsonText);

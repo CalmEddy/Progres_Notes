@@ -152,8 +152,8 @@ function scoreKernel(kernel: JokeKernel): KernelScoreResult {
   let score = 0;
 
   // Validate required fields exist
-  if (!kernel || !kernel.setup || !kernel.punch || !kernel.anchor) {
-    return null; // Missing required fields
+  if (!kernel || !kernel.setup || !kernel.punch || !kernel.anchor || !kernel.signal || !kernel.misread || !kernel.consequence) {
+    return { scored: null, rejectionReason: 'missing required fields' };
   }
 
   // Hard filters - reject immediately
@@ -162,11 +162,58 @@ function scoreKernel(kernel: JokeKernel): KernelScoreResult {
   }
   
   if (!kernel.setup || kernel.setup.trim().length === 0) {
-    return null; // Missing setup
+    return { scored: null, rejectionReason: 'missing setup' };
   }
   
   if (!kernel.anchor || kernel.anchor.trim().length === 0) {
-    return null; // Missing anchor
+    return { scored: null, rejectionReason: 'missing anchor' };
+  }
+
+  if (!kernel.signal || kernel.signal.trim().length === 0) {
+    return { scored: null, rejectionReason: 'missing signal' };
+  }
+
+  if (!kernel.misread || kernel.misread.trim().length === 0) {
+    return { scored: null, rejectionReason: 'missing misread' };
+  }
+
+  if (!kernel.consequence || kernel.consequence.trim().length === 0) {
+    return { scored: null, rejectionReason: 'missing consequence' };
+  }
+
+  // Validate word counts for signal, misread, consequence
+  const signalWords = kernel.signal.trim().split(/\s+/).length;
+  if (signalWords < 3 || signalWords > 10) {
+    return { scored: null, rejectionReason: 'signal word count out of range (3-10)' };
+  }
+
+  const misreadWords = kernel.misread.trim().split(/\s+/).length;
+  if (misreadWords < 3 || misreadWords > 14) {
+    return { scored: null, rejectionReason: 'misread word count out of range (3-14)' };
+  }
+
+  const consequenceWords = kernel.consequence.trim().split(/\s+/).length;
+  if (consequenceWords < 3 || consequenceWords > 14) {
+    return { scored: null, rejectionReason: 'consequence word count out of range (3-14)' };
+  }
+
+  // Validate setup includes signal (with or without quotes)
+  const setupLower = kernel.setup.toLowerCase();
+  const signalLower = kernel.signal.toLowerCase();
+  const signalInQuotesLower = `"${signalLower}"`;
+  if (!setupLower.includes(signalLower) && !setupLower.includes(signalInQuotesLower)) {
+    return { scored: null, rejectionReason: 'setup does not include signal' };
+  }
+
+  // Validate word counts for setup and punch
+  const setupWords = kernel.setup.split(/\s+/).length;
+  if (setupWords < 8 || setupWords > 18) {
+    return { scored: null, rejectionReason: 'setup word count out of range (8-18)' };
+  }
+
+  const punchWords = kernel.punch.split(/\s+/).length;
+  if (punchWords < 4 || punchWords > 14) {
+    return { scored: null, rejectionReason: 'punch word count out of range (4-14)' };
   }
 
   // Check if punch is too similar to setup
@@ -213,8 +260,6 @@ function scoreKernel(kernel: JokeKernel): KernelScoreResult {
     reasons.push('novel concrete noun');
   }
 
-  const setupWords = kernel.setup.split(/\s+/).length;
-  const punchWords = kernel.punch.split(/\s+/).length;
   if (punchWords < setupWords) {
     score += 10;
     reasons.push('punch shorter than setup');
@@ -223,17 +268,6 @@ function scoreKernel(kernel: JokeKernel): KernelScoreResult {
   if (isSpecificAnchor(kernel.anchor)) {
     score += 10;
     reasons.push('specific anchor');
-  }
-
-  // Penalties
-  if (setupWords > 20) {
-    score -= 10;
-    reasons.push('setup too long');
-  }
-
-  if (punchWords > 18) {
-    score -= 15;
-    reasons.push('punch too long');
   }
 
   // Check for analogy-only structure

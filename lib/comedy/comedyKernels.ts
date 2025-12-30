@@ -24,9 +24,12 @@ export interface JokeKernel {
   id: string; // uuid
   mechanism: ComedyMechanism;
   stance: ComedicStance;
-  anchor: string; // concrete object/place/system/sensory detail
-  setup: string; // short setup line (spoken)
-  punch: string; // short terminal punch line (must add consequence/reversal)
+  anchor: string; // concrete object/place/system/sensory detail (must be specific)
+  signal: string; // EXACT words/request/text/phrase (3–10 words)
+  misread: string; // WHAT IT GETS INTERPRETED AS (3–14 words)
+  consequence: string; // FORCED outcome/reversal (3–14 words)
+  setup: string; // 8–18 words; MUST include the signal verbatim in quotes
+  punch: string; // 4–14 words; MUST express consequence or reversal (terminal)
   tags?: string[]; // optional (topic-related)
   notes?: string; // optional internal note
   risk?: 'low' | 'med' | 'high'; // optional
