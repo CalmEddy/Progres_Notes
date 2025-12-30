@@ -6,6 +6,7 @@ import { storePhrasesForNote } from './phrases/phraseStorage';
 import { createChunksForNote } from './chunks/chunking';
 import { generateEmbeddingsForNoteChunks } from './chunks/embeddingService';
 import { generateThemeForNote } from './themes/themeGeneration';
+import { JokeDiagnostics } from './jokeDiagnostics';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -32,6 +33,7 @@ export interface Note {
   user_id: string;
   title: string | null;
   body: string;
+  diagnostics: JokeDiagnostics[] | null;
   folder_id: string | null;
   parent_note_id: string | null;
   position: number;
@@ -57,7 +59,8 @@ export async function createNoteForUser(
   folderId?: string | null,
   parentNoteId?: string | null,
   position?: number,
-  accessToken?: string
+  accessToken?: string,
+  diagnostics?: JokeDiagnostics[] | null
 ): Promise<Note> {
   // Allow empty body if we have a title (for pages with only titles)
   if ((!body || body.trim().length === 0) && !title) {
@@ -88,6 +91,7 @@ export async function createNoteForUser(
       title: title || null,
       body: body.trim(),
       embedding: embedding,
+      diagnostics: diagnostics ?? null,
       folder_id: folderId !== undefined ? folderId : null,
       parent_note_id: parentNoteId !== undefined ? parentNoteId : null,
       position: position !== undefined ? position : 0,
@@ -464,4 +468,3 @@ export async function deleteNoteForUser(
     throw new Error(`Failed to delete note: ${error.message}`);
   }
 }
-

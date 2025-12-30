@@ -8,6 +8,7 @@ create table if not exists notes (
   user_id uuid references auth.users(id) on delete cascade not null,
   title text,
   body text not null,
+  diagnostics jsonb,
   embedding vector(1536), -- text-embedding-3-small produces 1536-dimensional vectors
   created_at timestamp with time zone default now() not null,
   updated_at timestamp with time zone default now() not null
@@ -1343,4 +1344,3 @@ create policy "Users can delete own conversations"
         and notes.user_id = auth.uid()
     )
   );
-
