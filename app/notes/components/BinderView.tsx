@@ -590,6 +590,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         user_id: '', // Will be set by server
         title: noteTitle,
         body: noteBody,
+        diagnostics: null,
         folder_id: null,
         parent_note_id: null,
         position: binderStructure.filter(item => !item.parent_id).length,
@@ -669,6 +670,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         user_id: '',
         title: noteTitle,
         body: noteBody,
+        diagnostics: null,
         folder_id: null,
         parent_note_id: selectedNote.id,
         position: childNotes.length,
@@ -961,4 +963,3 @@ export default function BinderView({ userEmail }: BinderViewProps) {
     </div>
   );
 }
-

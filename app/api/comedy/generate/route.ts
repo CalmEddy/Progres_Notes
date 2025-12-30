@@ -37,23 +37,6 @@ async function getSessionFromRequest(request: NextRequest) {
 }
 
 /**
- * Split text by blank lines (two or more consecutive newlines)
- * Normalizes CRLF to LF, trims chunks, and filters empty ones
- */
-function splitByBlankLines(text: string): string[] {
-  // Normalize CRLF to LF
-  const normalized = text.replace(/\r\n/g, '\n');
-  
-  // Split on two or more newlines
-  const chunks = normalized.split(/\n{2,}/);
-  
-  // Trim each chunk and filter empty ones
-  return chunks
-    .map(chunk => chunk.trim())
-    .filter(chunk => chunk.length > 0);
-}
-
-/**
  * POST /api/comedy/generate
  * 
  * Generate comedy jokes based on topic and joke count
@@ -65,6 +48,7 @@ function splitByBlankLines(text: string): string[] {
  * Response:
  * - text: string - Full text output
  * - chunks: string[] - Jokes split by blank lines
+ * - diagnostics: JokeDiagnostics[] - Diagnostics aligned to chunks
  * - note: object - Created note information (id, title, created_at)
  */
 export async function POST(request: NextRequest) {
@@ -102,14 +86,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate comedy
-    const text = await generateComedy({
+    const result = await generateComedy({
       topic: topic.trim(),
       jokeCount: count,
       clean: clean !== false, // default to true
     });
 
-    // Split into chunks
-    const chunks = splitByBlankLines(text);
+    const text = result.jokes.join('\n\n');
+    const chunks = result.jokes;
 
     // Save generated jokes as a note
     const noteTitle = `Jokes about ${topic.trim()}`;
@@ -120,12 +104,14 @@ export async function POST(request: NextRequest) {
       undefined, // folderId
       undefined, // parentNoteId
       undefined, // position
-      session.accessToken
+      session.accessToken,
+      result.diagnostics
     );
 
     return NextResponse.json({
       text,
       chunks,
+      diagnostics: result.diagnostics,
       note: {
         id: note.id,
         title: note.title,

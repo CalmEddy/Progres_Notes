@@ -21,7 +21,8 @@ async function testComedyGeneration() {
 
   try {
     console.log('Test: Default (clean)');
-    const text = await generateComedy({ topic, jokeCount });
+    const result = await generateComedy({ topic, jokeCount });
+    const text = result.jokes.join('\n\n');
     
     console.log('Generated Comedy:');
     console.log('---');
@@ -29,11 +30,7 @@ async function testComedyGeneration() {
     console.log('---\n');
     
     // Test chunk splitting
-    const chunks = text
-      .replace(/\r\n/g, '\n')
-      .split(/\n{2,}/)
-      .map(chunk => chunk.trim())
-      .filter(chunk => chunk.length > 0);
+    const chunks = result.jokes;
     
     console.log(`Total chunks: ${chunks.length} (expected: ${jokeCount})`);
     console.log('\nChunks:');

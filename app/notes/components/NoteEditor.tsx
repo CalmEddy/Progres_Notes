@@ -11,6 +11,7 @@ import NoteChildrenView from './NoteChildrenView';
 import TagChip from './TagChip';
 import TagSelector from './TagSelector';
 import ChunkEditor from './ChunkEditor';
+import JokeDiagnosticsView from './JokeDiagnosticsView';
 import { createSupabaseClient } from '@/lib/supabaseClient';
 
 interface NoteEditorProps {
@@ -140,6 +141,9 @@ export default function NoteEditor({
   }
 
   const hasChildren = childNotes.length > 0;
+  const shouldShowJokeDiagnostics =
+    Boolean(note.diagnostics && note.diagnostics.length > 0) ||
+    (note.title?.startsWith('Jokes about') ?? false);
   // Default to children view if note has children, otherwise content view
   const currentViewMode = viewMode ?? (hasChildren ? 'children' : 'content');
   
@@ -353,10 +357,14 @@ export default function NoteEditor({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="prose max-w-none">
-            <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
-              {note.body}
-            </p>
+          <div className="max-w-none">
+            {shouldShowJokeDiagnostics ? (
+              <JokeDiagnosticsView body={note.body} diagnostics={note.diagnostics} />
+            ) : (
+              <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
+                {note.body}
+              </p>
+            )}
           </div>
 
           {/* Phrases */}
@@ -389,4 +397,3 @@ export default function NoteEditor({
     </>
   );
 }
-

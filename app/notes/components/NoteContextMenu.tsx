@@ -72,9 +72,12 @@ export default function NoteContextMenu({
         user_id: session.user.id,
         title: null,
         body: '',
+        diagnostics: null,
         folder_id: null,
         parent_note_id: noteId,
         position: 0,
+        conversation_id: null,
+        is_conversation: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -328,4 +331,3 @@ export default function NoteContextMenu({
     </div>
   );
 }
-
