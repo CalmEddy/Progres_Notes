@@ -1,20 +1,16 @@
 /**
  * Comedy Generation Service
- * 
- * Generates comedy jokes using a three-stage pipeline:
- * 1. Generate mechanism-first joke skeletons
- * 2. Score and select valid skeletons
- * 3. Render selected skeletons through voice contracts
+ *
+ * Generates comedy jokes using a single-call pipeline:
+ * 1. System prompt (unchanged)
+ * 2. Developer prompt (mechanism-first comedy)
+ * 3. User topic/request
  */
 
-import { VOICE_CONTRACTS, HumoristId } from './voiceContracts';
-import { generateSkeletons, SkeletonGenerationConstraints } from './skeletonGenerator';
-import {
-  scoreSkeletonsWithStats,
-  selectBestSkeletons,
-  getMechanismDistribution,
-} from './skeletonScoring';
-import { renderJokesFromSkeletons, RendererConstraints } from './skeletonRenderer';
+import { getOpenAIClient } from '@/lib/openaiClient';
+import { SYSTEM_PROMPT } from './systemPrompt';
+import { SIMPLIFIED_DEVELOPER_PROMPT } from './developerPrompt';
+import { VOICE_CONTRACTS, HumoristId, VoiceContract } from './voiceContracts';
 
 export interface GenerateComedyParams {
   topic: string;
@@ -23,14 +19,62 @@ export interface GenerateComedyParams {
   clean?: boolean; // NEW: optional constraint
 }
 
+function buildStyleOverlay(voiceContract: VoiceContract, humoristId: HumoristId): string {
+  const specialInstruction =
+    humoristId === 'steven_wright'
+      ? '\nAdditional constraint: Each joke must be a SINGLE sentence.'
+      : '';
+
+  return `\n\nSTYLE OVERLAY (secondary to mechanism-first comedy):
+Apply these voice constraints for phrasing, rhythm, and tone only.
+Humorist: ${voiceContract.humorist}
+
+Core Point of View
+${voiceContract.corePointOfView}
+
+Primary Joke Engine
+${voiceContract.primaryJokeEngine}
+
+Emotional Stance
+${voiceContract.emotionalStance}
+
+Signature Devices (rotate per joke)
+${voiceContract.signatureDevices.map(device => `- ${device}`).join('\n')}
+
+Sentence and Pacing Characteristics
+${voiceContract.sentenceAndPacingCharacteristics}
+
+Tone Boundaries (must not cross)
+${voiceContract.toneBoundaries.map(boundary => `- ${boundary}`).join('\n')}
+
+Forbidden Comedy Moves
+${voiceContract.forbiddenComedyMoves.map(move => `- ${move}`).join('\n')}
+
+Voice Fingerprints (at least one per joke)
+${voiceContract.voiceFingerprints.map(fingerprint => `- ${fingerprint}`).join('\n')}${specialInstruction}`;
+}
+
+function normalizeJokeOutput(output: string): { jokes: string[]; normalized: string } {
+  const normalizedNewlines = output.trim().replace(/\r\n/g, '\n');
+  const jokes = normalizedNewlines
+    .split(/\n\s*\n/)
+    .map(joke => joke.trim().replace(/\s*\n\s*/g, ' '))
+    .filter(Boolean);
+
+  return {
+    jokes,
+    normalized: jokes.join('\n\n'),
+  };
+}
+
 /**
  * Generate comedy jokes using the specified humorist's voice
- * 
- * Two-stage pipeline:
- * 1. Generate mechanism-first skeletons (Stage A)
- * 2. Score and select skeletons (Stage B)
- * 3. Render skeletons through voice contract (Stage C)
- * 
+ *
+ * Single-call pipeline:
+ * 1. System prompt (unchanged)
+ * 2. Developer prompt (mechanism-first comedy)
+ * 3. User topic/request
+ *
  * @param params - Generation parameters
  * @returns Plain text output with jokes separated by blank lines
  */
@@ -46,113 +90,53 @@ export async function generateComedy({
     throw new Error(`Voice contract not found for humorist: ${humoristId}`);
   }
 
-  const constraints: SkeletonGenerationConstraints & RendererConstraints = { clean };
-  const isDebug = process.env.COMEDY_DEBUG === 'true';
-
   try {
-    // Stage A: Generate skeletons
-    const targetSkeletonCount = 36;
-    
-    if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Generating skeletons for topic: "${topic}"`);
-      console.log(`[COMEDY_DEBUG] Target skeleton count: ${targetSkeletonCount}`);
-    }
-
-    let batch = await generateSkeletons(topic, targetSkeletonCount, constraints);
-
-    if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Generated ${batch.candidates.length} skeletons`);
-    }
-
-    // Score skeletons
-    const scoredStats = scoreSkeletonsWithStats(batch);
-    const scored = scoredStats.scored;
-
-    if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Scored ${scored.length} skeletons (after hard filters)`);
-      console.log(
-        `[COMEDY_DEBUG] Rejected ${scoredStats.rejectedTotal} skeletons (out of ${scoredStats.total})`
-      );
-      if (scoredStats.rejectedTotal > 0) {
-        console.log(`[COMEDY_DEBUG] Rejection reasons:`);
-        Object.entries(scoredStats.rejectionCounts)
-          .sort((a, b) => b[1] - a[1])
-          .forEach(([reason, count]) => {
-            console.log(`  ${reason}: ${count}`);
-          });
-      }
-      console.log(`[COMEDY_DEBUG] Selected mechanism distribution (pre-selection):`);
-      const mechanismCounts = getMechanismDistribution(scored.map(s => s.skeleton));
-      Object.entries(mechanismCounts).forEach(([mech, count]) => {
-        console.log(`  ${mech}: ${count}`);
-      });
-    }
-
-    // Select best skeletons
-    let selected = selectBestSkeletons(scored, jokeCount);
-
-    // If we don't have enough skeletons, generate a second batch (once)
-    if (selected.length < jokeCount) {
-      if (isDebug) {
-        console.log(`[COMEDY_DEBUG] Only ${selected.length} skeletons selected, generating second batch`);
-      }
-
-      const secondBatch = await generateSkeletons(topic, targetSkeletonCount, constraints);
-      const secondScoredStats = scoreSkeletonsWithStats(secondBatch);
-      const secondScored = secondScoredStats.scored;
-      const secondSelected = selectBestSkeletons(secondScored, jokeCount - selected.length);
-
-      if (isDebug) {
-        console.log(
-          `[COMEDY_DEBUG] Second batch rejected ${secondScoredStats.rejectedTotal} skeletons (out of ${secondScoredStats.total})`
-        );
-        if (secondScoredStats.rejectedTotal > 0) {
-          console.log(`[COMEDY_DEBUG] Second batch rejection reasons:`);
-          Object.entries(secondScoredStats.rejectionCounts)
-            .sort((a, b) => b[1] - a[1])
-            .forEach(([reason, count]) => {
-              console.log(`  ${reason}: ${count}`);
-            });
-        }
-      }
-
-      const selectedIds = new Set(selected.map(s => s.id));
-      const additional = secondSelected.filter(s => !selectedIds.has(s.id));
-      selected = [...selected, ...additional];
-
-      if (isDebug) {
-        console.log(`[COMEDY_DEBUG] After second batch: ${selected.length} skeletons selected`);
-      }
-    }
-
-    if (selected.length < jokeCount) {
-      throw new Error('Insufficient valid skeletons after two generation passes');
-    }
-
-    if (selected.length === 0) {
-      throw new Error('No valid skeletons generated after filtering');
-    }
-
-    if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Final selected: ${selected.length} skeletons`);
-      console.log('[COMEDY_DEBUG] Selected mechanism distribution:');
-      const selectedDistribution = getMechanismDistribution(selected);
-      Object.entries(selectedDistribution).forEach(([mech, count]) => {
-        console.log(`  ${mech}: ${count}`);
-      });
-    }
-
-    // Stage C: Render skeletons through voice contract
-    const finalText = await renderJokesFromSkeletons(
-      selected,
+    const openai = getOpenAIClient();
+    const developerMessage = `${SIMPLIFIED_DEVELOPER_PROMPT}${buildStyleOverlay(
       voiceContract,
-      humoristId,
-      jokeCount,
-      topic,
-      constraints
-    );
+      humoristId
+    )}`;
+    const cleanLabel = clean === false ? 'NO' : 'YES';
+    const userMessage = `Topic: ${topic}
+Joke count: ${jokeCount}
+Clean: ${cleanLabel}`;
+    const maxTokens = Math.min(120 * jokeCount, 3000);
 
-    return finalText;
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: SYSTEM_PROMPT,
+        },
+        {
+          role: 'developer',
+          content: developerMessage,
+        },
+        {
+          role: 'user',
+          content: userMessage,
+        },
+      ],
+      temperature: 0.9,
+      top_p: 0.95,
+      presence_penalty: 0.3,
+      frequency_penalty: 0.2,
+      max_tokens: maxTokens,
+    });
+
+    const outputText = completion.choices[0]?.message?.content || '';
+
+    if (!outputText.trim()) {
+      throw new Error('Empty response from OpenAI');
+    }
+
+    const { jokes, normalized } = normalizeJokeOutput(outputText);
+    if (jokes.length !== jokeCount) {
+      throw new Error(`Expected ${jokeCount} jokes but received ${jokes.length}`);
+    }
+
+    return normalized;
   } catch (error) {
     console.error('Error generating comedy:', error);
     throw new Error(
