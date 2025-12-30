@@ -120,7 +120,7 @@ export const VOICE_CONTRACTS: Record<HumoristId, VoiceContract> = {
       'Ask internally: (1) Is there a clear punchline, not just a funny situation? (2) Does every sentence earn its place by driving toward or delivering that punch? (3) Is the energy high and immediate, not anecdotal? If not, revise.',
   },
 
-Steven_Wright: {
+  steven_wright: {
     humorist: 'Steven Wright',
 
     corePointOfView:
