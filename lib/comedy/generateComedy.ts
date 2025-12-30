@@ -1,21 +1,20 @@
 /**
  * Comedy Generation Service
  * 
- * Generates comedy jokes using a two-stage pipeline:
- * 1. Generate diverse joke kernels using comedy mechanisms
- * 2. Score and select best kernels
- * 3. Render selected kernels through voice contracts
+ * Generates comedy jokes using a three-stage pipeline:
+ * 1. Generate mechanism-first joke skeletons
+ * 2. Score and select valid skeletons
+ * 3. Render selected skeletons through voice contracts
  */
 
 import { VOICE_CONTRACTS, HumoristId } from './voiceContracts';
-import { generateKernels, KernelGenerationConstraints } from './kernelGenerator';
+import { generateSkeletons, SkeletonGenerationConstraints } from './skeletonGenerator';
 import {
-  scoreKernels,
-  scoreKernelsWithStats,
-  selectBestKernels,
-  calculateStringSimilarity,
-} from './kernelScoring';
-import { renderJokesFromKernels, RendererConstraints } from './kernelRenderer';
+  scoreSkeletonsWithStats,
+  selectBestSkeletons,
+  getMechanismDistribution,
+} from './skeletonScoring';
+import { renderJokesFromSkeletons, RendererConstraints } from './skeletonRenderer';
 
 export interface GenerateComedyParams {
   topic: string;
@@ -28,8 +27,9 @@ export interface GenerateComedyParams {
  * Generate comedy jokes using the specified humorist's voice
  * 
  * Two-stage pipeline:
- * 1. Generate diverse joke kernels (Stage A)
- * 2. Score, select, and render through voice contract (Stage B)
+ * 1. Generate mechanism-first skeletons (Stage A)
+ * 2. Score and select skeletons (Stage B)
+ * 3. Render skeletons through voice contract (Stage C)
  * 
  * @param params - Generation parameters
  * @returns Plain text output with jokes separated by blank lines
@@ -46,33 +46,32 @@ export async function generateComedy({
     throw new Error(`Voice contract not found for humorist: ${humoristId}`);
   }
 
-  const constraints: KernelGenerationConstraints & RendererConstraints = { clean };
+  const constraints: SkeletonGenerationConstraints & RendererConstraints = { clean };
   const isDebug = process.env.COMEDY_DEBUG === 'true';
 
   try {
-    // Stage A: Generate kernels
-    // Request more kernels than needed to ensure we have enough after filtering
-    const targetKernelCount = jokeCount * 3;
+    // Stage A: Generate skeletons
+    const targetSkeletonCount = 36;
     
     if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Generating kernels for topic: "${topic}"`);
-      console.log(`[COMEDY_DEBUG] Target kernel count: ${targetKernelCount}`);
+      console.log(`[COMEDY_DEBUG] Generating skeletons for topic: "${topic}"`);
+      console.log(`[COMEDY_DEBUG] Target skeleton count: ${targetSkeletonCount}`);
     }
 
-    let batch = await generateKernels(topic, targetKernelCount, constraints);
+    let batch = await generateSkeletons(topic, targetSkeletonCount, constraints);
 
     if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Generated ${batch.kernels.length} kernels`);
+      console.log(`[COMEDY_DEBUG] Generated ${batch.candidates.length} skeletons`);
     }
 
-    // Score kernels
-    const scoredStats = scoreKernelsWithStats(batch);
+    // Score skeletons
+    const scoredStats = scoreSkeletonsWithStats(batch);
     const scored = scoredStats.scored;
 
     if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Scored ${scored.length} kernels (after hard filters)`);
+      console.log(`[COMEDY_DEBUG] Scored ${scored.length} skeletons (after hard filters)`);
       console.log(
-        `[COMEDY_DEBUG] Rejected ${scoredStats.rejectedTotal} kernels (out of ${scoredStats.total})`
+        `[COMEDY_DEBUG] Rejected ${scoredStats.rejectedTotal} skeletons (out of ${scoredStats.total})`
       );
       if (scoredStats.rejectedTotal > 0) {
         console.log(`[COMEDY_DEBUG] Rejection reasons:`);
@@ -82,42 +81,30 @@ export async function generateComedy({
             console.log(`  ${reason}: ${count}`);
           });
       }
-      const top5 = scored.slice(0, 5);
-      console.log(`[COMEDY_DEBUG] Top 5 scores:`);
-      top5.forEach((s, i) => {
-        console.log(`  ${i + 1}. Score: ${s.score}, Reasons: ${s.reasons.join(', ')}`);
-      });
-
-      // Count rejection reasons
-      const rejectionReasons: Record<string, number> = {};
-      // This is approximate since we don't track rejections in detail
-      console.log(`[COMEDY_DEBUG] Mechanism distribution:`);
-      const mechanismCounts: Record<string, number> = {};
-      scored.forEach(s => {
-        mechanismCounts[s.kernel.mechanism] = (mechanismCounts[s.kernel.mechanism] || 0) + 1;
-      });
+      console.log(`[COMEDY_DEBUG] Selected mechanism distribution (pre-selection):`);
+      const mechanismCounts = getMechanismDistribution(scored.map(s => s.skeleton));
       Object.entries(mechanismCounts).forEach(([mech, count]) => {
         console.log(`  ${mech}: ${count}`);
       });
     }
 
-    // Select best kernels
-    let selected = selectBestKernels(scored, jokeCount);
+    // Select best skeletons
+    let selected = selectBestSkeletons(scored, jokeCount);
 
-    // If we don't have enough kernels, generate a second batch
+    // If we don't have enough skeletons, generate a second batch (once)
     if (selected.length < jokeCount) {
       if (isDebug) {
-        console.log(`[COMEDY_DEBUG] Only ${selected.length} kernels selected, generating second batch`);
+        console.log(`[COMEDY_DEBUG] Only ${selected.length} skeletons selected, generating second batch`);
       }
 
-      const secondBatch = await generateKernels(topic, targetKernelCount, constraints);
-      const secondScoredStats = scoreKernelsWithStats(secondBatch);
+      const secondBatch = await generateSkeletons(topic, targetSkeletonCount, constraints);
+      const secondScoredStats = scoreSkeletonsWithStats(secondBatch);
       const secondScored = secondScoredStats.scored;
-      const secondSelected = selectBestKernels(secondScored, jokeCount - selected.length);
+      const secondSelected = selectBestSkeletons(secondScored, jokeCount - selected.length);
 
       if (isDebug) {
         console.log(
-          `[COMEDY_DEBUG] Second batch rejected ${secondScoredStats.rejectedTotal} kernels (out of ${secondScoredStats.total})`
+          `[COMEDY_DEBUG] Second batch rejected ${secondScoredStats.rejectedTotal} skeletons (out of ${secondScoredStats.total})`
         );
         if (secondScoredStats.rejectedTotal > 0) {
           console.log(`[COMEDY_DEBUG] Second batch rejection reasons:`);
@@ -129,67 +116,34 @@ export async function generateComedy({
         }
       }
 
-      // Merge, avoiding duplicates
-      const selectedIds = new Set(selected.map(k => k.id));
-      const additional = secondSelected.filter(k => !selectedIds.has(k.id));
+      const selectedIds = new Set(selected.map(s => s.id));
+      const additional = secondSelected.filter(s => !selectedIds.has(s.id));
       selected = [...selected, ...additional];
 
       if (isDebug) {
-        console.log(`[COMEDY_DEBUG] After second batch: ${selected.length} kernels selected`);
+        console.log(`[COMEDY_DEBUG] After second batch: ${selected.length} skeletons selected`);
       }
     }
 
-    // If still insufficient, relax diversity (allow repeats)
     if (selected.length < jokeCount) {
-      if (isDebug) {
-        console.log(`[COMEDY_DEBUG] Still insufficient (${selected.length}), relaxing diversity`);
-      }
-
-      const sorted = [...scored].sort((a, b) => b.score - a.score);
-      const selectedIds = new Set(selected.map(k => k.id));
-      const usedTexts = new Set(
-        selected.map(k => `${k.setup || ''} ${k.punch || ''}`.toLowerCase().trim())
-      );
-
-      for (const scoredKernel of sorted) {
-        if (selected.length >= jokeCount) break;
-        if (selectedIds.has(scoredKernel.kernel.id)) continue;
-
-        const normalizedText = `${scoredKernel.kernel.setup || ''} ${scoredKernel.kernel.punch || ''}`
-          .toLowerCase()
-          .trim();
-
-        // Still avoid exact duplicates
-        let isDuplicate = false;
-        for (const usedText of usedTexts) {
-          const similarity =
-            usedTexts.size > 0
-              ? calculateStringSimilarity(normalizedText, usedText)
-              : 0;
-          if (similarity > 0.9) {
-            isDuplicate = true;
-            break;
-          }
-        }
-
-        if (!isDuplicate) {
-          selected.push(scoredKernel.kernel);
-          selectedIds.add(scoredKernel.kernel.id);
-          usedTexts.add(normalizedText);
-        }
-      }
+      throw new Error('Insufficient valid skeletons after two generation passes');
     }
 
     if (selected.length === 0) {
-      throw new Error('No valid kernels generated after filtering');
+      throw new Error('No valid skeletons generated after filtering');
     }
 
     if (isDebug) {
-      console.log(`[COMEDY_DEBUG] Final selected: ${selected.length} kernels`);
+      console.log(`[COMEDY_DEBUG] Final selected: ${selected.length} skeletons`);
+      console.log('[COMEDY_DEBUG] Selected mechanism distribution:');
+      const selectedDistribution = getMechanismDistribution(selected);
+      Object.entries(selectedDistribution).forEach(([mech, count]) => {
+        console.log(`  ${mech}: ${count}`);
+      });
     }
 
-    // Stage B: Render kernels through voice contract
-    const finalText = await renderJokesFromKernels(
+    // Stage C: Render skeletons through voice contract
+    const finalText = await renderJokesFromSkeletons(
       selected,
       voiceContract,
       humoristId,

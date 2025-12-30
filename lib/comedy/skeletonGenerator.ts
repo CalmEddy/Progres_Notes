@@ -1,13 +1,13 @@
 /**
- * Kernel Generator (Stage A)
- * 
- * Generates diverse joke kernels using the comedy mechanism library.
- * This stage focuses on creativity and variety, not voice.
+ * Skeleton Generator (Stage A)
+ *
+ * Generates diverse mechanism-first joke skeletons.
+ * This stage focuses on structure and variety, not voice.
  */
 
 import { getOpenAIClient } from '@/lib/openaiClient';
-import { KERNEL_GENERATOR_SYSTEM_PROMPT, buildKernelGeneratorUserMessage } from './kernelPrompts';
-import { KernelBatch, JokeKernel } from './comedyKernels';
+import { SKELETON_GENERATOR_SYSTEM_PROMPT, buildSkeletonGeneratorUserMessage } from './skeletonPrompts';
+import { SkeletonBatch, JokeSkeleton } from './jokeSkeletons';
 import { randomUUID } from 'crypto';
 
 const DOUBLE_QUOTE_VARIANTS = /[\u201C\u201D\u201E\u201F\u2033\u2036\u00AB\u00BB\u301D\u301E\u301F\uFF02]/g;
@@ -163,27 +163,62 @@ function sanitizeJsonString(jsonText: string): string {
   return result;
 }
 
-export interface KernelGenerationConstraints {
+export function validateSkeletonBatch(batch: SkeletonBatch): void {
+  if (!batch || typeof batch !== 'object') {
+    throw new Error('Invalid skeleton batch: not an object');
+  }
+  if (typeof batch.topic !== 'string' || batch.topic.trim().length === 0) {
+    throw new Error('Invalid skeleton batch: missing topic');
+  }
+  if (typeof batch.requestedCount !== 'number') {
+    throw new Error('Invalid skeleton batch: missing requestedCount');
+  }
+  if (!Array.isArray(batch.candidates)) {
+    throw new Error('Invalid skeleton batch: missing candidates array');
+  }
+  for (const candidate of batch.candidates) {
+    if (!candidate || typeof candidate !== 'object') {
+      throw new Error('Invalid skeleton batch: candidate is not an object');
+    }
+    const requiredFields: Array<keyof JokeSkeleton> = [
+      'id',
+      'mechanism',
+      'anchor',
+      'assumption',
+      'turn',
+      'punch',
+      'setupLine',
+      'punchLine',
+    ];
+    for (const field of requiredFields) {
+      if (!candidate[field] || String(candidate[field]).trim().length === 0) {
+        throw new Error(`Invalid skeleton batch: candidate missing ${field}`);
+      }
+    }
+  }
+}
+
+export interface SkeletonGenerationConstraints {
   clean?: boolean;
 }
 
 /**
- * Generate joke kernels for a topic
- * 
+ * Generate joke skeletons for a topic
+ *
  * @param topic - The topic to generate jokes about
- * @param targetKernelCount - Target number of kernels to generate (typically jokeCount * 3)
+ * @param targetSkeletonCount - Target number of skeletons to generate
  * @param constraints - Optional constraints (clean/edgy)
- * @returns KernelBatch with generated kernels
+ * @returns SkeletonBatch with generated skeletons
  */
-export async function generateKernels(
+export async function generateSkeletons(
   topic: string,
-  targetKernelCount: number,
-  constraints: KernelGenerationConstraints = {}
-): Promise<KernelBatch> {
+  targetSkeletonCount: number,
+  constraints: SkeletonGenerationConstraints = {}
+): Promise<SkeletonBatch> {
   const openai = getOpenAIClient();
   const clean = constraints.clean !== false; // default to true
 
-  const userMessage = buildKernelGeneratorUserMessage(topic, targetKernelCount, clean);
+  const userMessage = buildSkeletonGeneratorUserMessage(topic, targetSkeletonCount, clean);
 
   let retryCount = 0;
   const maxRetries = 1;
@@ -195,7 +230,7 @@ export async function generateKernels(
         messages: [
           {
             role: 'system',
-            content: KERNEL_GENERATOR_SYSTEM_PROMPT,
+            content: SKELETON_GENERATOR_SYSTEM_PROMPT,
           },
           {
             role: 'user',
@@ -235,7 +270,7 @@ export async function generateKernels(
       // Comprehensive JSON sanitization - handles all common LLM JSON errors
       jsonText = sanitizeJsonString(jsonText);
 
-      let batch: KernelBatch;
+      let batch: SkeletonBatch;
       try {
         batch = JSON.parse(jsonText);
       } catch (parseError) {
@@ -358,19 +393,17 @@ export async function generateKernels(
       }
 
       // Validate and ensure IDs
-      if (!batch.kernels || !Array.isArray(batch.kernels)) {
-        throw new Error('Invalid kernel batch: missing kernels array');
-      }
+      validateSkeletonBatch(batch);
 
-      // Ensure all kernels have IDs
-      batch.kernels = batch.kernels.map(kernel => ({
-        ...kernel,
-        id: kernel.id || randomUUID(),
+      // Ensure all skeletons have IDs
+      batch.candidates = batch.candidates.map(skeleton => ({
+        ...skeleton,
+        id: skeleton.id || randomUUID(),
       }));
 
       // Validate topic and requestedCount
       batch.topic = batch.topic || topic;
-      batch.requestedCount = batch.requestedCount || targetKernelCount;
+      batch.requestedCount = batch.requestedCount || targetSkeletonCount;
 
       return batch;
     } catch (error) {
@@ -378,12 +411,12 @@ export async function generateKernels(
         retryCount++;
         continue;
       }
-      console.error('Error generating kernels:', error);
+      console.error('Error generating skeletons:', error);
       throw new Error(
-        `Failed to generate kernels: ${error instanceof Error ? error.message : 'Unknown error'}`
+        `Failed to generate skeletons: ${error instanceof Error ? error.message : 'Unknown error'}`
       );
     }
   }
 
-  throw new Error('Failed to generate kernels after retries');
+  throw new Error('Failed to generate skeletons after retries');
 }

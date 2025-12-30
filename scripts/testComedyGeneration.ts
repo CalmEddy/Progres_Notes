@@ -4,7 +4,7 @@
  * Run with: npm run test-comedy (add script to package.json)
  * Or: tsx scripts/testComedyGeneration.ts
  * 
- * Set COMEDY_DEBUG=true to see kernel generation details
+ * Set COMEDY_DEBUG=true to see skeleton generation details
  */
 
 import { generateComedy } from '../lib/comedy/generateComedy';
@@ -17,7 +17,7 @@ async function testComedyGeneration() {
   const topic = 'air travel';
   const jokeCount = 5;
 
-  console.log('Testing comedy generation (two-stage pipeline)...');
+  console.log('Testing comedy generation (three-stage pipeline)...');
   console.log(`Topic: ${topic}`);
   console.log(`Joke Count: ${jokeCount}`);
   console.log(`Debug mode: ${process.env.COMEDY_DEBUG === 'true' ? 'ON' : 'OFF'}`);
@@ -93,4 +93,3 @@ async function testComedyGeneration() {
 }
 
 testComedyGeneration();
-

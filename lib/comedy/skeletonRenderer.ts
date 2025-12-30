@@ -1,15 +1,15 @@
 /**
- * Kernel Renderer (Stage B)
- * 
- * Renders selected joke kernels through voice contracts to produce
+ * Skeleton Renderer (Stage C)
+ *
+ * Renders selected joke skeletons through voice contracts to produce
  * final stand-up jokes.
  */
 
 import { getOpenAIClient } from '@/lib/openaiClient';
 import { SYSTEM_PROMPT } from './systemPrompt';
-import { buildRendererUserMessage } from './kernelPrompts';
+import { buildRendererUserMessage } from './skeletonPrompts';
 import { VoiceContract, HumoristId } from './voiceContracts';
-import { JokeKernel } from './comedyKernels';
+import { JokeSkeleton } from './jokeSkeletons';
 
 export interface RendererConstraints {
   clean?: boolean;
@@ -31,23 +31,40 @@ export function normalizeRenderedJokes(output: string): {
   };
 }
 
-function isValidRenderedJokes(output: string, jokeCount: number): {
+function normalizeForMatch(text: string): string {
+  return text.trim().toLowerCase().replace(/[.!?]+$/g, '');
+}
+
+export function jokeEndsWithPunchLine(joke: string, punchLine: string): boolean {
+  const normalizedJoke = normalizeForMatch(joke);
+  const normalizedPunch = normalizeForMatch(punchLine);
+  return normalizedJoke.endsWith(normalizedPunch);
+}
+
+function isValidRenderedJokes(
+  output: string,
+  jokeCount: number,
+  skeletons: JokeSkeleton[]
+): {
   jokes: string[];
   normalized: string;
   isValid: boolean;
 } {
   const { jokes, normalized } = normalizeRenderedJokes(output);
+  const hasValidPunches =
+    jokes.length === skeletons.length &&
+    jokes.every((joke, index) => jokeEndsWithPunchLine(joke, skeletons[index].punchLine));
   return {
     jokes,
     normalized,
-    isValid: jokes.length === jokeCount,
+    isValid: jokes.length === jokeCount && hasValidPunches,
   };
 }
 
 /**
- * Render selected kernels into final jokes using voice contract
- * 
- * @param kernels - Selected joke kernels to render
+ * Render selected skeletons into final jokes using voice contract
+ *
+ * @param skeletons - Selected joke skeletons to render
  * @param voiceContract - Voice contract to apply
  * @param humoristId - Humorist ID (for special handling like Steven Wright)
  * @param jokeCount - Target number of jokes
@@ -55,8 +72,8 @@ function isValidRenderedJokes(output: string, jokeCount: number): {
  * @param constraints - Optional constraints (clean/edgy)
  * @returns Final jokes as plain text
  */
-export async function renderJokesFromKernels(
-  kernels: JokeKernel[],
+export async function renderJokesFromSkeletons(
+  skeletons: JokeSkeleton[],
   voiceContract: VoiceContract,
   humoristId: HumoristId,
   jokeCount: number,
@@ -120,7 +137,7 @@ ${voiceContract.internalQualityCheck}`;
 
   const userMessage = `${voiceContractSection}
 
-${buildRendererUserMessage(topic, jokeCount, kernels, clean)}${specialInstructions}
+${buildRendererUserMessage(topic, jokeCount, skeletons, clean)}${specialInstructions}
 
 Additional request constraints:
 
@@ -158,7 +175,7 @@ Additional request constraints:
         throw new Error('Empty response from OpenAI');
       }
 
-      const { isValid, normalized } = isValidRenderedJokes(outputText, jokeCount);
+      const { isValid, normalized } = isValidRenderedJokes(outputText, jokeCount, skeletons);
       if (isValid) {
         return normalized;
       }
