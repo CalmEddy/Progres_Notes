@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { topic, jokeCount, humoristId, clean } = body;
+    const { topic, jokeCount, clean } = body;
 
     // Validate topic
     if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
@@ -105,7 +105,6 @@ export async function POST(request: NextRequest) {
     const text = await generateComedy({
       topic: topic.trim(),
       jokeCount: count,
-      humoristId: humoristId || 'dave_barry', // Use provided humoristId or default to dave_barry
       clean: clean !== false, // default to true
     });
 
@@ -143,4 +142,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

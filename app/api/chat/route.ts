@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getOpenAIClient } from '@/lib/openaiClient';
-import { createConversation, addMessageToConversation, getConversationWithMessages } from '@/lib/conversations/conversationStorage';
-import { VOICE_CONTRACTS, HumoristId } from '@/lib/comedy/voiceContracts';
+import {
+  createConversation,
+  addMessageToConversation,
+  getConversationWithMessages,
+} from '@/lib/conversations/conversationStorage';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -47,7 +50,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { message, conversationId, model = 'gpt-4o-mini', humoristId } = body;
+    const { message, conversationId, model = 'gpt-4o-mini' } = body;
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return NextResponse.json(
@@ -96,69 +99,6 @@ export async function POST(request: NextRequest) {
       role: msg.role,
       content: msg.content,
     }));
-
-    // If a voice contract is selected, inject it as a system message at the beginning
-    if (humoristId && VOICE_CONTRACTS[humoristId as HumoristId]) {
-      const voiceContract = VOICE_CONTRACTS[humoristId as HumoristId];
-      
-      // Create voice contract instruction message
-      const voiceContractInstruction = `You are adopting the voice and style of ${voiceContract.humorist}. 
-
-Core Point of View:
-${voiceContract.corePointOfView}
-
-Primary Approach:
-${voiceContract.primaryJokeEngine}
-
-Emotional Stance:
-${voiceContract.emotionalStance}
-
-Signature Devices (use these naturally):
-${voiceContract.signatureDevices.map(d => `- ${d}`).join('\n')}
-
-Sentence and Pacing:
-${voiceContract.sentenceAndPacingCharacteristics}
-
-Subject Strengths:
-${voiceContract.subjectStrengths.map(s => `- ${s}`).join('\n')}
-
-Tone Boundaries (must not cross):
-${voiceContract.toneBoundaries.map(t => `- ${t}`).join('\n')}
-
-Forbidden Moves:
-${voiceContract.forbiddenComedyMoves.map(f => `- ${f}`).join('\n')}
-
-Voice Fingerprints (include naturally):
-${voiceContract.voiceFingerprints.map(f => `- ${f}`).join('\n')}
-
-Quality Check:
-${voiceContract.internalQualityCheck}
-
-Respond to all messages in this conversation using this voice and style. Do not announce that you are adopting a voice - simply respond naturally in this style.`;
-
-      // Remove any existing voice contract system messages (in case user switched contracts)
-      // Look for system messages that contain voice contract indicators
-      const systemMessages = messages.filter(msg => {
-        if (msg.role !== 'system') return true;
-        // Check if this is a voice contract system message by looking for humorist names
-        const isVoiceContract = Object.values(VOICE_CONTRACTS).some(
-          contract => msg.content.includes(contract.humorist) && msg.content.includes('You are adopting the voice')
-        );
-        return !isVoiceContract;
-      });
-      
-      // Insert voice contract instruction after any remaining system messages, before user/assistant messages
-      const nonSystemMessages = systemMessages.filter(msg => msg.role !== 'system');
-      const remainingSystemMessages = systemMessages.filter(msg => msg.role === 'system');
-      
-      messages.length = 0; // Clear array
-      messages.push(...remainingSystemMessages);
-      messages.push({
-        role: 'system',
-        content: voiceContractInstruction,
-      });
-      messages.push(...nonSystemMessages);
-    }
 
     // Create a streaming response
     const stream = new ReadableStream({
@@ -229,4 +169,3 @@ Respond to all messages in this conversation using this voice and style. Do not 
     );
   }
 }
-

@@ -10,48 +10,10 @@
 import { getOpenAIClient } from '@/lib/openaiClient';
 import { SYSTEM_PROMPT } from './systemPrompt';
 import { SIMPLIFIED_DEVELOPER_PROMPT } from './developerPrompt';
-import { VOICE_CONTRACTS, HumoristId, VoiceContract } from './voiceContracts';
-
 export interface GenerateComedyParams {
   topic: string;
   jokeCount: number;
-  humoristId?: HumoristId;
   clean?: boolean; // NEW: optional constraint
-}
-
-function buildStyleOverlay(voiceContract: VoiceContract, humoristId: HumoristId): string {
-  const specialInstruction =
-    humoristId === 'steven_wright'
-      ? '\nAdditional constraint: Each joke must be a SINGLE sentence.'
-      : '';
-
-  return `\n\nSTYLE OVERLAY (secondary to mechanism-first comedy):
-Apply these voice constraints for phrasing, rhythm, and tone only.
-Humorist: ${voiceContract.humorist}
-
-Core Point of View
-${voiceContract.corePointOfView}
-
-Primary Joke Engine
-${voiceContract.primaryJokeEngine}
-
-Emotional Stance
-${voiceContract.emotionalStance}
-
-Signature Devices (rotate per joke)
-${voiceContract.signatureDevices.map(device => `- ${device}`).join('\n')}
-
-Sentence and Pacing Characteristics
-${voiceContract.sentenceAndPacingCharacteristics}
-
-Tone Boundaries (must not cross)
-${voiceContract.toneBoundaries.map(boundary => `- ${boundary}`).join('\n')}
-
-Forbidden Comedy Moves
-${voiceContract.forbiddenComedyMoves.map(move => `- ${move}`).join('\n')}
-
-Voice Fingerprints (at least one per joke)
-${voiceContract.voiceFingerprints.map(fingerprint => `- ${fingerprint}`).join('\n')}${specialInstruction}`;
 }
 
 function normalizeJokeOutput(output: string): { jokes: string[]; normalized: string } {
@@ -68,7 +30,7 @@ function normalizeJokeOutput(output: string): { jokes: string[]; normalized: str
 }
 
 /**
- * Generate comedy jokes using the specified humorist's voice
+ * Generate comedy jokes using the mechanism-first prompt
  *
  * Single-call pipeline:
  * 1. System prompt (unchanged)
@@ -81,21 +43,11 @@ function normalizeJokeOutput(output: string): { jokes: string[]; normalized: str
 export async function generateComedy({
   topic,
   jokeCount,
-  humoristId = 'dave_barry',
   clean = true,
 }: GenerateComedyParams): Promise<string> {
-  const voiceContract = VOICE_CONTRACTS[humoristId];
-
-  if (!voiceContract) {
-    throw new Error(`Voice contract not found for humorist: ${humoristId}`);
-  }
-
   try {
     const openai = getOpenAIClient();
-    const developerMessage = `${SIMPLIFIED_DEVELOPER_PROMPT}${buildStyleOverlay(
-      voiceContract,
-      humoristId
-    )}`;
+    const developerMessage = SIMPLIFIED_DEVELOPER_PROMPT;
     const cleanLabel = clean === false ? 'NO' : 'YES';
     const userMessage = `Topic: ${topic}
 Joke count: ${jokeCount}

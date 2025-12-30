@@ -4,17 +4,10 @@ import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseClient } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
-import { HumoristId, VoiceContract } from '@/lib/comedy/voiceContracts';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
-}
-
-interface VoiceContractOption {
-  id: string;
-  name: string;
-  contract: VoiceContract;
 }
 
 export default function ChatInterface() {
@@ -28,9 +21,6 @@ export default function ChatInterface() {
   const [jokeCount, setJokeCount] = useState(10);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedVoiceContract, setSelectedVoiceContract] = useState<HumoristId | 'none'>('none');
-  const [voiceContracts, setVoiceContracts] = useState<VoiceContractOption[]>([]);
-  const [loadingVoiceContracts, setLoadingVoiceContracts] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -46,30 +36,6 @@ export default function ChatInterface() {
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [input]);
-
-  // Fetch voice contracts on mount
-  useEffect(() => {
-    const fetchVoiceContracts = async () => {
-      try {
-        setLoadingVoiceContracts(true);
-        const response = await fetch('/api/voice-contracts');
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch voice contracts');
-        }
-        
-        const data = await response.json();
-        setVoiceContracts(data.contracts || []);
-      } catch (err) {
-        console.error('Error loading voice contracts:', err);
-        setError('Failed to load voice contracts');
-      } finally {
-        setLoadingVoiceContracts(false);
-      }
-    };
-
-    fetchVoiceContracts();
-  }, []);
 
   const getAuthHeaders = async () => {
     const supabase = createSupabaseClient();
@@ -105,7 +71,6 @@ export default function ChatInterface() {
           body: JSON.stringify({
             topic: userMessage,
             jokeCount: jokeCount,
-            humoristId: selectedVoiceContract !== 'none' ? selectedVoiceContract : 'dave_barry',
           }),
         });
 
@@ -154,7 +119,6 @@ export default function ChatInterface() {
             message: userMessage,
             conversationId,
             model: 'gpt-4o-mini',
-            humoristId: selectedVoiceContract !== 'none' ? selectedVoiceContract : undefined,
           }),
         });
 
@@ -286,26 +250,6 @@ export default function ChatInterface() {
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-gray-900">Chat</h1>
         <div className="flex items-center gap-4">
-          {/* Voice Contract Dropdown */}
-          <div className="flex items-center gap-2">
-            <label htmlFor="voice-contract" className="text-sm text-gray-600">
-              Voice:
-            </label>
-            <select
-              id="voice-contract"
-              value={selectedVoiceContract}
-              onChange={(e) => setSelectedVoiceContract(e.target.value as HumoristId | 'none')}
-              disabled={!aiEnabled || loadingVoiceContracts}
-              className="text-sm border border-gray-300 rounded px-3 py-1.5 bg-white text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="none">Default</option>
-              {voiceContracts.map((vc) => (
-                <option key={vc.id} value={vc.id}>
-                  {vc.name}
-                </option>
-              ))}
-            </select>
-          </div>
           {/* AI Toggle */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-600">AI</span>
@@ -470,4 +414,3 @@ export default function ChatInterface() {
     </div>
   );
 }
-
