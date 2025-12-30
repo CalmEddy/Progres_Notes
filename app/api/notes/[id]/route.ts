@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { updateNoteForUser, deleteNoteForUser } from '@/lib/notes';
+import { updateNoteForUser, deleteNoteForUser, getNoteById } from '@/lib/notes';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -31,6 +31,45 @@ async function getSessionFromRequest(request: NextRequest) {
   }
 
   return null;
+}
+
+// GET /api/notes/[id] - Get a note by ID
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const session = await getSessionFromRequest(request);
+
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const noteId = params.id;
+
+    if (!noteId) {
+      return NextResponse.json(
+        { error: 'Note ID is required' },
+        { status: 400 }
+      );
+    }
+
+    const note = await getNoteById(noteId, session.user.id, session.accessToken);
+
+    if (!note) {
+      return NextResponse.json({ error: 'Note not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(note);
+  } catch (error) {
+    console.error('Error getting note:', error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : 'Failed to get note',
+      },
+      { status: 500 }
+    );
+  }
 }
 
 // PUT /api/notes/[id] - Update a note

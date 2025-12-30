@@ -3,17 +3,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseClient } from '@/lib/supabaseClient';
-import { BinderItem } from '@/lib/binder/types';
+import { BinderItem, ActiveContext } from '@/lib/binder/types';
 import { Note } from '@/lib/notes';
 import { Phrase } from '@/lib/phrases/types';
 import { Tag } from '@/lib/tags/types';
 import { FilterFolder, FilterCondition } from '@/lib/filters/types';
+import { CollectionBinderItemWithChunk } from '@/lib/collections/types';
+import { BinderSearchResult } from '@/lib/binder/binderSearch';
 import BinderSidebar from './BinderSidebar';
+import SaveSearchDialog from './SaveSearchDialog';
+import { SearchCriteria } from '@/lib/collections/types';
 import NoteEditor from './NoteEditor';
 import FilterBuilder from './FilterBuilder';
 import FilteredNotesView from './FilteredNotesView';
 import ChunksColumn from './ChunksColumn';
 import ChunkContentColumn from './ChunkContentColumn';
+import CollectionItemsColumn from './CollectionItemsColumn';
 import { NoteChunk } from '@/lib/chunks/chunking';
 import {
   addItemToTree,
@@ -32,10 +37,13 @@ interface BinderViewProps {
 export default function BinderView({ userEmail }: BinderViewProps) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [activeContext, setActiveContext] = useState<ActiveContext | null>(null);
   const [binderStructure, setBinderStructure] = useState<BinderItem[]>([]);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [selectedChunk, setSelectedChunk] = useState<NoteChunk | null>(null);
   const [selectedFilterFolder, setSelectedFilterFolder] = useState<FilterFolder | null>(null);
+  const [selectedCollectionFolderItemId, setSelectedCollectionFolderItemId] = useState<string | null>(null);
+  const [selectedCollectionItem, setSelectedCollectionItem] = useState<CollectionBinderItemWithChunk | null>(null);
   const [childNotes, setChildNotes] = useState<Note[]>([]);
   const [notePhrases, setNotePhrases] = useState<Record<string, Phrase[]>>({});
   const [noteTags, setNoteTags] = useState<Record<string, Tag[]>>({});
@@ -44,6 +52,10 @@ export default function BinderView({ userEmail }: BinderViewProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showFilterBuilder, setShowFilterBuilder] = useState(false);
   const [editingFilterFolder, setEditingFilterFolder] = useState<FilterFolder | null>(null);
+  const [saveSearchDialogOpen, setSaveSearchDialogOpen] = useState(false);
+  const [searchCriteriaToSave, setSearchCriteriaToSave] = useState<SearchCriteria | null>(null);
+  const [chunkSearchResults, setChunkSearchResults] = useState<BinderSearchResult[] | null>(null);
+  const [isChunkSearching, setIsChunkSearching] = useState(false);
 
   // Track which notes have phrases/tags loaded
   const loadedPhrasesRef = useRef<Set<string>>(new Set());
@@ -268,6 +280,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
     setSelectedNote(note);
     setSelectedChunk(null); // Clear chunk selection when note changes
     setSelectedFilterFolder(null); // Clear filter folder selection
+    setActiveContext({ kind: 'note', noteId: note.id });
     // Clear child notes immediately to avoid showing stale data
     setChildNotes([]);
     
@@ -299,6 +312,110 @@ export default function BinderView({ userEmail }: BinderViewProps) {
     setSelectedChunk(chunk);
   }, []);
 
+  const handleChunkSearch = useCallback(async (chunkId: string, scope: 'all' | 'note') => {
+    setIsChunkSearching(true);
+    setChunkSearchResults(null); // Clear previous results
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch('/api/chunks/search/by-chunk', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          chunkId,
+          scope,
+          matchThreshold: 0.35,
+          limit: 20,
+        }),
+      });
+
+      if (response.ok) {
+        const chunkResults = await response.json();
+        
+        // Get unique note IDs from chunk results
+        const noteIds = [...new Set(chunkResults.map((chunk: any) => chunk.note_id))];
+        
+        // Fetch the notes in batch (much faster than individual requests)
+        const notesResponse = await fetch('/api/notes/batch', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ noteIds }),
+        });
+        
+        const notes: Note[] = notesResponse.ok ? await notesResponse.json() : [];
+        
+        // Convert chunks to BinderSearchResult format
+        // Group chunks by note_id to get best similarity per note
+        const noteToChunks = new Map<string, any[]>();
+        chunkResults.forEach((chunk: any) => {
+          const existing = noteToChunks.get(chunk.note_id) || [];
+          existing.push(chunk);
+          noteToChunks.set(chunk.note_id, existing);
+        });
+        
+        // Create BinderSearchResult objects
+        const searchResults = notes.map((note) => {
+          const chunks = noteToChunks.get(note.id) || [];
+          const bestChunk = chunks.sort((a, b) => b.similarity - a.similarity)[0];
+          return {
+            ...note,
+            similarity: bestChunk?.similarity || 0,
+            search_type: 'semantic' as const,
+            matching_chunk_text: bestChunk?.chunk_text || '',
+          };
+        }).sort((a, b) => b.similarity - a.similarity);
+        
+        // Set chunk search results to display in sidebar
+        setChunkSearchResults(searchResults);
+        
+        // Clear chunk search results when regular search is performed
+        // This will be handled by BinderSidebar when searchQuery changes
+      } else {
+        const errorData = await response.json();
+        alert(errorData.error || 'Failed to search chunks');
+      }
+    } catch (err) {
+      console.error('Error searching chunks:', err);
+      alert('Failed to search chunks');
+    } finally {
+      setIsChunkSearching(false);
+    }
+  }, []);
+
+  const handleSaveSearchAsCollection = useCallback((searchCriteria: SearchCriteria) => {
+    setSearchCriteriaToSave(searchCriteria);
+    setSaveSearchDialogOpen(true);
+  }, []);
+
+  const handleSaveSearchCollection = useCallback(async (name: string, searchCriteria: SearchCriteria) => {
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch('/api/collections', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name,
+          is_search_collection: true,
+          search_criteria: searchCriteria,
+        }),
+      });
+
+      if (response.ok) {
+        const newCollection = await response.json();
+        // Optionally select the new collection
+        setActiveContext({ kind: 'collection', collectionId: newCollection.id, collectionFolderItemId: null });
+        setSaveSearchDialogOpen(false);
+        setSearchCriteriaToSave(null);
+        // Reload binder structure to show new collection
+        loadBinderStructure();
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create collection');
+      }
+    } catch (err) {
+      throw err;
+    }
+  }, [loadBinderStructure]);
+
   const handleFilterFolderClick = useCallback(async (filterFolderId: string) => {
     try {
       const headers = await getAuthHeaders();
@@ -308,6 +425,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         setSelectedFilterFolder(folder);
         setSelectedNote(null); // Clear note selection
         setSelectedChunk(null); // Clear chunk selection
+        setActiveContext(null); // Clear active context
         setShowFilterBuilder(false); // Hide builder if open
       } else {
         console.error('Error loading filter folder:', response.statusText);
@@ -328,6 +446,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         setSelectedFilterFolder(null);
         setSelectedNote(null);
         setSelectedChunk(null);
+        setActiveContext(null);
       }
     } catch (err) {
       console.error('Error loading filter folder for edit:', err);
@@ -474,6 +593,8 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         folder_id: null,
         parent_note_id: null,
         position: binderStructure.filter(item => !item.parent_id).length,
+        conversation_id: null,
+        is_conversation: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -551,6 +672,8 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         folder_id: null,
         parent_note_id: selectedNote.id,
         position: childNotes.length,
+        conversation_id: null,
+        is_conversation: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -628,16 +751,18 @@ export default function BinderView({ userEmail }: BinderViewProps) {
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
-        <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-            My Notes
-          </h1>
-          <p className="text-sm text-gray-600 flex items-center mt-1">
-            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-            </svg>
-            {userEmail}
-          </p>
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              My Notes
+            </h1>
+            <p className="text-sm text-gray-600 flex items-center mt-1">
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              {userEmail}
+            </p>
+          </div>
         </div>
         <div className="flex gap-3">
           <button
@@ -646,6 +771,12 @@ export default function BinderView({ userEmail }: BinderViewProps) {
           >
             New Note
           </button>
+          <a
+            href="/chat"
+            className="btn-secondary text-sm"
+          >
+            Chat
+          </a>
           <a
             href="/import"
             className="btn-secondary text-sm"
@@ -663,12 +794,19 @@ export default function BinderView({ userEmail }: BinderViewProps) {
 
       {/* Main Content - Miller Columns Layout */}
       <div className="flex-1 flex overflow-hidden min-h-0">
-        {/* Column 1: Notes (BinderSidebar) */}
+        {/* Column 1: BinderSidebar (with integrated Collections section) */}
         <BinderSidebar
           binderStructure={binderStructure}
-          selectedNoteId={selectedNote?.id || null}
+          selectedNoteId={activeContext?.kind === 'note' ? activeContext.noteId : null}
+          selectedCollectionId={activeContext?.kind === 'collection' ? activeContext.collectionId : null}
           noteTags={noteTags}
           onNoteSelect={handleNoteSelect}
+          onCollectionSelect={(collectionId) => {
+            setActiveContext({ kind: 'collection', collectionId, collectionFolderItemId: null });
+            setSelectedNote(null);
+            setSelectedChunk(null);
+            setSelectedFilterFolder(null);
+          }}
           onCreateFilterFolder={handleCreateFilterFolder}
           onFilterFolderClick={handleFilterFolderClick}
           onFilterFolderEdit={handleFilterFolderEdit}
@@ -678,14 +816,69 @@ export default function BinderView({ userEmail }: BinderViewProps) {
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
           loading={loading}
           error={error}
+          onSaveSearchAsCollection={handleSaveSearchAsCollection}
+          chunkSearchResults={chunkSearchResults}
+          onClearChunkSearchResults={() => setChunkSearchResults(null)}
+          isChunkSearching={isChunkSearching}
         />
 
-        {/* Column 2: Chunks (shown when note is selected and not showing filter/filtered view) */}
-        {selectedNote && !showFilterBuilder && !selectedFilterFolder && (
+        {/* Column 2: Contextual Items Column */}
+        {!showFilterBuilder && !selectedFilterFolder && activeContext?.kind === 'note' && (
           <ChunksColumn
-            noteId={selectedNote.id}
+            noteId={activeContext.noteId}
             selectedChunkId={selectedChunk?.id || null}
             onChunkSelect={handleChunkSelect}
+            activeCollectionId={undefined}
+            onAddChunkToCollection={async (chunk) => {
+              // CollectionPicker handles the logic in ChunksColumn
+              // This callback is called after successful addition
+            }}
+            onChunkSearch={handleChunkSearch}
+          />
+        )}
+        {!showFilterBuilder && !selectedFilterFolder && activeContext?.kind === 'collection' && (
+          <CollectionItemsColumn
+            collectionId={activeContext.collectionId}
+            parentFolderId={activeContext.collectionFolderItemId || null}
+            selectedItemId={selectedCollectionItem?.id || null}
+            onItemSelect={(item) => {
+              setSelectedCollectionItem(item);
+              if (item.chunk) {
+                // Convert to NoteChunk for display
+                setSelectedChunk({
+                  id: item.chunk.id,
+                  note_id: item.chunk.note_id,
+                  chunk_text: item.chunk.chunk_text,
+                  chunk_index: item.chunk.chunk_index,
+                  embedding: null,
+                  created_at: '',
+                  updated_at: '',
+                });
+              } else if (item.item_type === 'folder') {
+                // Navigate into folder
+                setActiveContext({
+                  kind: 'collection',
+                  collectionId: activeContext.collectionId,
+                  collectionFolderItemId: item.id,
+                });
+                setSelectedCollectionItem(null);
+              }
+            }}
+            onRemove={(itemId) => {
+              // Reload will happen in CollectionItemsColumn
+              if (selectedCollectionItem?.id === itemId) {
+                setSelectedCollectionItem(null);
+                setSelectedChunk(null);
+              }
+            }}
+            onNavigateUp={() => {
+              setActiveContext({
+                kind: 'collection',
+                collectionId: activeContext.collectionId,
+                collectionFolderItemId: null,
+              });
+              setSelectedCollectionItem(null);
+            }}
           />
         )}
 
@@ -714,7 +907,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
           </div>
         ) : selectedChunk ? (
           <ChunkContentColumn chunk={selectedChunk} />
-        ) : selectedNote ? (
+        ) : selectedNote && activeContext?.kind === 'note' ? (
           <div className="flex-1 flex flex-col overflow-hidden bg-white">
             <NoteEditor
               note={selectedNote}
@@ -754,6 +947,17 @@ export default function BinderView({ userEmail }: BinderViewProps) {
           </div>
         )}
       </div>
+
+      {/* Save Search Dialog */}
+      <SaveSearchDialog
+        isOpen={saveSearchDialogOpen}
+        onClose={() => {
+          setSaveSearchDialogOpen(false);
+          setSearchCriteriaToSave(null);
+        }}
+        onSave={handleSaveSearchCollection}
+        searchCriteria={searchCriteriaToSave}
+      />
     </div>
   );
 }

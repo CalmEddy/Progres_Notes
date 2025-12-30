@@ -35,6 +35,8 @@ export interface Note {
   folder_id: string | null;
   parent_note_id: string | null;
   position: number;
+  conversation_id: string | null;
+  is_conversation: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -412,6 +414,34 @@ export async function getNoteById(
   }
 
   return data as Note;
+}
+
+/**
+ * Get multiple notes by IDs in batch
+ */
+export async function getNotesByIds(
+  noteIds: string[],
+  userId: string,
+  accessToken?: string
+): Promise<Note[]> {
+  if (noteIds.length === 0) {
+    return [];
+  }
+
+  const supabase = createAuthenticatedClient(accessToken) || await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from('notes')
+    .select('*')
+    .in('id', noteIds)
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('Error getting notes:', error);
+    throw new Error(`Failed to get notes: ${error.message}`);
+  }
+
+  return (data || []) as Note[];
 }
 
 /**
