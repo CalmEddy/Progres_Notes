@@ -116,14 +116,14 @@ export async function generateComedy({
       const sorted = [...scored].sort((a, b) => b.score - a.score);
       const selectedIds = new Set(selected.map(k => k.id));
       const usedTexts = new Set(
-        selected.map(k => `${k.setup} ${k.punch}`.toLowerCase().trim())
+        selected.map(k => `${k.setup || ''} ${k.punch || ''}`.toLowerCase().trim())
       );
 
       for (const scoredKernel of sorted) {
         if (selected.length >= jokeCount) break;
         if (selectedIds.has(scoredKernel.kernel.id)) continue;
 
-        const normalizedText = `${scoredKernel.kernel.setup} ${scoredKernel.kernel.punch}`
+        const normalizedText = `${scoredKernel.kernel.setup || ''} ${scoredKernel.kernel.punch || ''}`
           .toLowerCase()
           .trim();
 

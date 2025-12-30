@@ -57,15 +57,16 @@ const NARRATIVE_GLUE_PATTERNS = [
  * Calculate Jaccard similarity between two strings (word-based)
  */
 export function calculateStringSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
   const wordsA = new Set(
-    a
+    (a || '')
       .toLowerCase()
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
       .filter(w => w.length > 0)
   );
   const wordsB = new Set(
-    b
+    (b || '')
       .toLowerCase()
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
@@ -108,6 +109,7 @@ function isSpecificAnchor(anchor: string): boolean {
  * Check if punch introduces concrete consequence
  */
 function hasConcreteConsequence(punch: string): boolean {
+  if (!punch) return false;
   const consequenceMarkers = [
     'so now',
     'which means',
@@ -126,8 +128,9 @@ function hasConcreteConsequence(punch: string): boolean {
  * Extract concrete nouns from text (simple heuristic)
  */
 function extractConcreteNouns(text: string): Set<string> {
+  if (!text) return new Set();
   // Simple heuristic: words that are likely nouns (capitalized or common nouns)
-  const words = text
+  const words = (text || '')
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
@@ -143,9 +146,22 @@ function scoreKernel(kernel: JokeKernel): ScoredKernel | null {
   const reasons: string[] = [];
   let score = 0;
 
+  // Validate required fields exist
+  if (!kernel || !kernel.setup || !kernel.punch || !kernel.anchor) {
+    return null; // Missing required fields
+  }
+
   // Hard filters - reject immediately
   if (!kernel.punch || kernel.punch.trim().length === 0) {
     return null; // Missing punch
+  }
+  
+  if (!kernel.setup || kernel.setup.trim().length === 0) {
+    return null; // Missing setup
+  }
+  
+  if (!kernel.anchor || kernel.anchor.trim().length === 0) {
+    return null; // Missing anchor
   }
 
   // Check if punch is too similar to setup
@@ -216,7 +232,7 @@ function scoreKernel(kernel: JokeKernel): ScoredKernel | null {
   }
 
   // Check for analogy-only structure
-  if (/like (a|an|the) /.test(kernel.punch.toLowerCase())) {
+  if (kernel.punch && /like (a|an|the) /.test(kernel.punch.toLowerCase())) {
     if (kernel.mechanism !== 'CONTRAST_COLLISION') {
       score -= 20;
       reasons.push('analogy-only structure');
@@ -268,7 +284,7 @@ export function selectBestKernels(
     if (selected.length >= count) break;
 
     const { kernel } = scoredKernel;
-    const normalizedText = `${kernel.setup} ${kernel.punch}`.toLowerCase().trim();
+    const normalizedText = `${kernel.setup || ''} ${kernel.punch || ''}`.toLowerCase().trim();
     
     // Skip if too similar to already selected
     let isDuplicate = false;
@@ -294,7 +310,7 @@ export function selectBestKernels(
     if (selected.length >= count) break;
 
     const { kernel } = scoredKernel;
-    const normalizedText = `${kernel.setup} ${kernel.punch}`.toLowerCase().trim();
+    const normalizedText = `${kernel.setup || ''} ${kernel.punch || ''}`.toLowerCase().trim();
     
     // Skip if already selected
     if (selected.some(k => k.id === kernel.id)) continue;
