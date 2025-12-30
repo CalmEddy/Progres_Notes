@@ -9,7 +9,12 @@
 
 import { VOICE_CONTRACTS, HumoristId } from './voiceContracts';
 import { generateKernels, KernelGenerationConstraints } from './kernelGenerator';
-import { scoreKernels, selectBestKernels, calculateStringSimilarity } from './kernelScoring';
+import {
+  scoreKernels,
+  scoreKernelsWithStats,
+  selectBestKernels,
+  calculateStringSimilarity,
+} from './kernelScoring';
 import { renderJokesFromKernels, RendererConstraints } from './kernelRenderer';
 
 export interface GenerateComedyParams {
@@ -61,10 +66,22 @@ export async function generateComedy({
     }
 
     // Score kernels
-    const scored = scoreKernels(batch);
+    const scoredStats = scoreKernelsWithStats(batch);
+    const scored = scoredStats.scored;
 
     if (isDebug) {
       console.log(`[COMEDY_DEBUG] Scored ${scored.length} kernels (after hard filters)`);
+      console.log(
+        `[COMEDY_DEBUG] Rejected ${scoredStats.rejectedTotal} kernels (out of ${scoredStats.total})`
+      );
+      if (scoredStats.rejectedTotal > 0) {
+        console.log(`[COMEDY_DEBUG] Rejection reasons:`);
+        Object.entries(scoredStats.rejectionCounts)
+          .sort((a, b) => b[1] - a[1])
+          .forEach(([reason, count]) => {
+            console.log(`  ${reason}: ${count}`);
+          });
+      }
       const top5 = scored.slice(0, 5);
       console.log(`[COMEDY_DEBUG] Top 5 scores:`);
       top5.forEach((s, i) => {
@@ -94,8 +111,23 @@ export async function generateComedy({
       }
 
       const secondBatch = await generateKernels(topic, targetKernelCount, constraints);
-      const secondScored = scoreKernels(secondBatch);
+      const secondScoredStats = scoreKernelsWithStats(secondBatch);
+      const secondScored = secondScoredStats.scored;
       const secondSelected = selectBestKernels(secondScored, jokeCount - selected.length);
+
+      if (isDebug) {
+        console.log(
+          `[COMEDY_DEBUG] Second batch rejected ${secondScoredStats.rejectedTotal} kernels (out of ${secondScoredStats.total})`
+        );
+        if (secondScoredStats.rejectedTotal > 0) {
+          console.log(`[COMEDY_DEBUG] Second batch rejection reasons:`);
+          Object.entries(secondScoredStats.rejectionCounts)
+            .sort((a, b) => b[1] - a[1])
+            .forEach(([reason, count]) => {
+              console.log(`  ${reason}: ${count}`);
+            });
+        }
+      }
 
       // Merge, avoiding duplicates
       const selectedIds = new Set(selected.map(k => k.id));
@@ -174,4 +206,3 @@ export async function generateComedy({
     );
   }
 }
-

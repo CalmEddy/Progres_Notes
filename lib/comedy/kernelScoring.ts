@@ -142,7 +142,12 @@ function extractConcreteNouns(text: string): Set<string> {
 /**
  * Score a single kernel
  */
-function scoreKernel(kernel: JokeKernel): ScoredKernel | null {
+type KernelScoreResult = {
+  scored: ScoredKernel | null;
+  rejectionReason?: string;
+};
+
+function scoreKernel(kernel: JokeKernel): KernelScoreResult {
   const reasons: string[] = [];
   let score = 0;
 
@@ -153,7 +158,7 @@ function scoreKernel(kernel: JokeKernel): ScoredKernel | null {
 
   // Hard filters - reject immediately
   if (!kernel.punch || kernel.punch.trim().length === 0) {
-    return null; // Missing punch
+    return { scored: null, rejectionReason: 'missing punch' };
   }
   
   if (!kernel.setup || kernel.setup.trim().length === 0) {
@@ -167,31 +172,31 @@ function scoreKernel(kernel: JokeKernel): ScoredKernel | null {
   // Check if punch is too similar to setup
   const similarity = calculateStringSimilarity(kernel.setup, kernel.punch);
   if (similarity > 0.85) {
-    return null; // Too similar
+    return { scored: null, rejectionReason: 'punch too similar to setup' };
   }
 
   // Check for rhetorical question endings
   if (kernel.punch.trim().endsWith('?')) {
-    return null; // Rhetorical question
+    return { scored: null, rejectionReason: 'rhetorical question' };
   }
 
   if (matchesPattern(kernel.punch, RHETORICAL_PATTERNS)) {
-    return null; // Rhetorical pattern
+    return { scored: null, rejectionReason: 'rhetorical pattern' };
   }
 
   // Check for explanatory endings
   if (matchesPattern(kernel.punch, EXPLANATORY_PATTERNS)) {
-    return null; // Explanatory ending
+    return { scored: null, rejectionReason: 'explanatory ending' };
   }
 
   // Check for narrative glue in setup
   if (matchesPattern(kernel.setup, NARRATIVE_GLUE_PATTERNS)) {
-    return null; // Narrative glue
+    return { scored: null, rejectionReason: 'narrative glue in setup' };
   }
 
   // Check for vague anchor
   if (!isSpecificAnchor(kernel.anchor)) {
-    return null; // Vague anchor
+    return { scored: null, rejectionReason: 'vague anchor' };
   }
 
   // Soft scoring
@@ -243,9 +248,11 @@ function scoreKernel(kernel: JokeKernel): ScoredKernel | null {
   score = Math.max(0, score);
 
   return {
-    kernel,
-    score,
-    reasons,
+    scored: {
+      kernel,
+      score,
+      reasons,
+    },
   };
 }
 
@@ -256,13 +263,42 @@ export function scoreKernels(batch: KernelBatch): ScoredKernel[] {
   const scored: ScoredKernel[] = [];
 
   for (const kernel of batch.kernels) {
-    const scoredKernel = scoreKernel(kernel);
-    if (scoredKernel) {
-      scored.push(scoredKernel);
+    const result = scoreKernel(kernel);
+    if (result.scored) {
+      scored.push(result.scored);
     }
   }
 
   return scored;
+}
+
+export function scoreKernelsWithStats(batch: KernelBatch): {
+  scored: ScoredKernel[];
+  rejectionCounts: Record<string, number>;
+  rejectedTotal: number;
+  total: number;
+} {
+  const scored: ScoredKernel[] = [];
+  const rejectionCounts: Record<string, number> = {};
+  let rejectedTotal = 0;
+
+  for (const kernel of batch.kernels) {
+    const result = scoreKernel(kernel);
+    if (result.scored) {
+      scored.push(result.scored);
+    } else {
+      rejectedTotal += 1;
+      const reason = result.rejectionReason || 'unknown';
+      rejectionCounts[reason] = (rejectionCounts[reason] || 0) + 1;
+    }
+  }
+
+  return {
+    scored,
+    rejectionCounts,
+    rejectedTotal,
+    total: batch.kernels.length,
+  };
 }
 
 /**
@@ -305,7 +341,8 @@ export function selectBestKernels(
   }
 
   // Second pass: fill remaining slots, avoiding back-to-back mechanism repeats
-  let lastMechanism: ComedyMechanism | null = null;
+  let lastMechanism: ComedyMechanism | null =
+    selected.length > 0 ? selected[selected.length - 1].mechanism : null;
   for (const scoredKernel of sorted) {
     if (selected.length >= count) break;
 
@@ -337,4 +374,3 @@ export function selectBestKernels(
 
   return selected;
 }
-
