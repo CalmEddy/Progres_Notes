@@ -10,6 +10,15 @@ import { KERNEL_GENERATOR_SYSTEM_PROMPT, buildKernelGeneratorUserMessage } from 
 import { KernelBatch, JokeKernel } from './comedyKernels';
 import { randomUUID } from 'crypto';
 
+const DOUBLE_QUOTE_VARIANTS = /[\u201C\u201D\u201E\u201F\u2033\u2036\u00AB\u00BB\u301D\u301E\u301F\uFF02]/g;
+const SINGLE_QUOTE_VARIANTS = /[\u2018\u2019\u201A\u201B\u2032\u2035\u2039\u203A\uFF07]/g;
+
+function normalizeQuotes(text: string): string {
+  return text
+    .replace(DOUBLE_QUOTE_VARIANTS, '"')
+    .replace(SINGLE_QUOTE_VARIANTS, "'");
+}
+
 /**
  * Comprehensive JSON sanitizer that fixes common LLM JSON errors
  * Handles: unquoted strings, unquoted keys, curly quotes, control chars, trailing commas, etc.
@@ -19,24 +28,11 @@ function sanitizeJsonString(jsonText: string): string {
   jsonText = jsonText.replace(/\/\/.*$/gm, ''); // Single line comments
   jsonText = jsonText.replace(/\/\*[\s\S]*?\*\//g, ''); // Multi-line comments
   
-  // Step 2: Replace ALL curly/smart quotes with straight quotes (comprehensive)
-  // Handle all Unicode quote variants - be very aggressive about this
-  // Common curly quotes (most frequent)
-  jsonText = jsonText.replace(/[""]/g, '"'); // Left/right double quotation marks (U+201C, U+201D)
-  jsonText = jsonText.replace(/[""]/g, '"');
-  jsonText = jsonText.replace(/['']/g, "'"); // Left/right single quotation marks (U+2018, U+2019)
-  jsonText = jsonText.replace(/['']/g, "'");
+  // Step 2: Replace ALL curly/smart quotes with straight quotes
+  jsonText = normalizeQuotes(jsonText);
   
-  // All Unicode quote variants using character code ranges
-  // Double quote variants: U+201C, U+201D, U+201E, U+201F, U+2033, U+2036
-  jsonText = jsonText.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"');
-  // Single quote variants: U+2018, U+2019, U+201A, U+201B, U+2032, U+2035
-  jsonText = jsonText.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
-  
-  // Run the replacement again to catch any that might have been missed
-  // (sometimes quotes can be in different contexts)
-  jsonText = jsonText.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"');
-  jsonText = jsonText.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
+  // Remove any BOM markers that can break JSON parsing
+  jsonText = jsonText.replace(/^\uFEFF/, '');
   
   // Step 3: Fix single quotes used as string delimiters
   // Pattern: 'word': or 'word', or : 'value' or , 'value'
@@ -173,6 +169,7 @@ export async function generateKernels(
             content: userMessage + (retryCount > 0 ? '\n\nCRITICAL: Return STRICT JSON ONLY. No markdown, no code blocks, no explanations. Valid JSON that can be parsed directly. Ensure proper JSON formatting with no trailing spaces.' : ''),
           },
         ],
+        response_format: { type: 'json_object' },
         temperature: 1.0,
         top_p: 0.95,
         presence_penalty: 0.5,
@@ -242,12 +239,7 @@ export async function generateKernels(
           // Additional aggressive fixes
           
           // Re-run curly quote replacement (sometimes they slip through)
-          jsonText = jsonText.replace(/[""]/g, '"');
-          jsonText = jsonText.replace(/[""]/g, '"');
-          jsonText = jsonText.replace(/['']/g, "'");
-          jsonText = jsonText.replace(/['']/g, "'");
-          jsonText = jsonText.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"');
-          jsonText = jsonText.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
+          jsonText = normalizeQuotes(jsonText);
           
           // Fix unquoted property names more aggressively
           jsonText = jsonText.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
@@ -328,4 +320,3 @@ export async function generateKernels(
 
   throw new Error('Failed to generate kernels after retries');
 }
-

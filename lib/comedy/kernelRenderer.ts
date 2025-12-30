@@ -15,6 +15,35 @@ export interface RendererConstraints {
   clean?: boolean;
 }
 
+export function normalizeRenderedJokes(output: string): {
+  jokes: string[];
+  normalized: string;
+} {
+  const normalizedNewlines = output.trim().replace(/\r\n/g, '\n');
+  const jokes = normalizedNewlines
+    .split(/\n\s*\n/)
+    .map(joke => joke.trim().replace(/\s*\n\s*/g, ' '))
+    .filter(Boolean);
+
+  return {
+    jokes,
+    normalized: jokes.join('\n\n'),
+  };
+}
+
+function isValidRenderedJokes(output: string, jokeCount: number): {
+  jokes: string[];
+  normalized: string;
+  isValid: boolean;
+} {
+  const { jokes, normalized } = normalizeRenderedJokes(output);
+  return {
+    jokes,
+    normalized,
+    isValid: jokes.length === jokeCount,
+  };
+}
+
 /**
  * Render selected kernels into final jokes using voice contract
  * 
@@ -100,32 +129,42 @@ Additional request constraints:
 - Each joke 1–3 sentences${humoristId === 'steven_wright' ? ' (preferably 1 sentence)' : ''}.`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: 'user',
-          content: userMessage,
-        },
-      ],
-      temperature: 0.8,
-      top_p: 0.95,
-      presence_penalty: 0.3,
-      frequency_penalty: 0.2,
-      max_tokens: 1200,
-    });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: SYSTEM_PROMPT,
+          },
+          {
+            role: 'user',
+            content:
+              attempt === 0
+                ? userMessage
+                : `${userMessage}\n\nCRITICAL: Output exactly ${jokeCount} jokes. One joke per paragraph, one blank line between jokes, no numbering or labels.`,
+          },
+        ],
+        temperature: 0.8,
+        top_p: 0.95,
+        presence_penalty: 0.3,
+        frequency_penalty: 0.2,
+        max_tokens: 1200,
+      });
 
-    const outputText = completion.choices[0]?.message?.content || '';
+      const outputText = completion.choices[0]?.message?.content || '';
 
-    if (!outputText.trim()) {
-      throw new Error('Empty response from OpenAI');
+      if (!outputText.trim()) {
+        throw new Error('Empty response from OpenAI');
+      }
+
+      const { isValid, normalized } = isValidRenderedJokes(outputText, jokeCount);
+      if (isValid) {
+        return normalized;
+      }
     }
 
-    return outputText.trim();
+    throw new Error(`Renderer returned incorrect joke count (expected ${jokeCount})`);
   } catch (error) {
     console.error('Error rendering jokes:', error);
     throw new Error(
@@ -133,4 +172,3 @@ Additional request constraints:
     );
   }
 }
-
