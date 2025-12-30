@@ -5,15 +5,37 @@ import {
   selectBestSkeletons,
 } from '../lib/comedy/skeletonScoring';
 import {
-  jokeEndsWithPunchLine,
-  normalizeRenderedJokes,
-} from '../lib/comedy/skeletonRenderer';
-import {
   JokeSkeleton,
   SkeletonBatch,
   ScoredSkeleton,
 } from '../lib/comedy/jokeSkeletons';
 import { ComedyMechanism } from '../lib/comedy/comedyMechanisms';
+
+function normalizeRenderedJokes(output: string): {
+  jokes: string[];
+  normalized: string;
+} {
+  const normalizedNewlines = output.trim().replace(/\r\n/g, '\n');
+  const jokes = normalizedNewlines
+    .split(/\n\s*\n/)
+    .map(joke => joke.trim().replace(/\s*\n\s*/g, ' '))
+    .filter(Boolean);
+
+  return {
+    jokes,
+    normalized: jokes.join('\n\n'),
+  };
+}
+
+function normalizeForMatch(text: string): string {
+  return text.trim().toLowerCase().replace(/[.!?]+$/g, '');
+}
+
+function jokeEndsWithPunchLine(joke: string, punchLine: string): boolean {
+  const normalizedJoke = normalizeForMatch(joke);
+  const normalizedPunch = normalizeForMatch(punchLine);
+  return normalizedJoke.endsWith(normalizedPunch);
+}
 
 function createSkeleton(overrides: Partial<JokeSkeleton>): JokeSkeleton {
   return {
