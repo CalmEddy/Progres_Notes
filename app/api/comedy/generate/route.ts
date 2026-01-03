@@ -92,8 +92,11 @@ export async function POST(request: NextRequest) {
       clean: clean !== false, // default to true
     });
 
-    const text = result.jokes.join('\n\n');
-    const chunks = result.jokes;
+    // Convert JokePair[] to string[] for backward compatibility
+    // For now, use joke 'a' from each pair. In the future, we might want to return both options.
+    const jokeStrings = result.jokes.map((pair) => pair.a);
+    const text = jokeStrings.join('\n\n');
+    const chunks = jokeStrings;
 
     // Save generated jokes as a note
     const noteTitle = `Jokes about ${topic.trim()}`;
@@ -105,13 +108,15 @@ export async function POST(request: NextRequest) {
       undefined, // parentNoteId
       undefined, // position
       session.accessToken,
-      result.diagnostics
+      result.diagnostics || [] // Handle optional diagnostics
     );
 
     return NextResponse.json({
       text,
       chunks,
-      diagnostics: result.diagnostics,
+      diagnostics: result.diagnostics || [], // Handle optional diagnostics
+      baseJokes: result.baseJokes, // Deprecated: for backward compatibility
+      selectedPremises: result.selectedPremises, // Selected premises sent to rewrite step
       note: {
         id: note.id,
         title: note.title,

@@ -31,8 +31,16 @@ export interface JokeDiagnostics {
 }
 
 export interface JokeGenResponse {
-  jokes: string[];
-  diagnostics: JokeDiagnostics[];
+  // Each input item yields two joke options.
+  jokes: JokePair[];
+  diagnostics?: JokeDiagnostics[]; // Optional since prompts no longer return diagnostics
+}
+
+export interface JokePair {
+  world?: string;
+  premise?: string;
+  a: string;
+  b: string;
 }
 
 const RESOLUTION_TYPES: ResolutionType[] = [
@@ -59,7 +67,7 @@ const FAILURE_FLAGS: FailureFlag[] = [
 const IRREVERSIBILITY_LEVELS: Irreversibility[] = ['High', 'Medium', 'Low'];
 const SPECIFICITY_LEVELS: Specificity[] = ['Concrete', 'Mixed', 'Vague'];
 
-const ROOT_KEYS = ['jokes', 'diagnostics'];
+const ROOT_KEYS = ['jokes']; // Diagnostics are optional now
 const DIAGNOSTICS_KEYS = [
   'resolutionType',
   'punchStrength',
@@ -108,14 +116,19 @@ export function validateJokeGenResponse(
 ): value is JokeGenResponse {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  if (!hasExactKeys(record, ROOT_KEYS)) return false;
-  if (!isStringArray(record.jokes)) return false;
-  if (!Array.isArray(record.diagnostics)) return false;
-
+  
+  // Jokes are required
+  if (!('jokes' in record) || !isStringArray(record.jokes)) return false;
   if (expectedCount !== undefined && record.jokes.length !== expectedCount) return false;
-  if (record.jokes.length !== record.diagnostics.length) return false;
-
-  return record.diagnostics.every(isJokeDiagnostics);
+  
+  // Diagnostics are optional (prompts no longer return them)
+  if ('diagnostics' in record) {
+    if (!Array.isArray(record.diagnostics)) return false;
+    if (record.diagnostics.length !== record.jokes.length) return false;
+    if (!record.diagnostics.every(isJokeDiagnostics)) return false;
+  }
+  
+  return true;
 }
 
 export function parseJokeGenResponse(raw: string, expectedCount: number): JokeGenResponse {
@@ -129,7 +142,40 @@ export function parseJokeGenResponse(raw: string, expectedCount: number): JokeGe
   }
 
   if (!validateJokeGenResponse(parsed, expectedCount)) {
-    throw new Error('Response JSON did not match expected joke diagnostics schema');
+    // Provide detailed error information
+    const record = parsed as Record<string, unknown>;
+    const errors: string[] = [];
+    
+    if (!parsed || typeof parsed !== 'object') {
+      errors.push('Response is not an object');
+    } else {
+      if (!('jokes' in record)) {
+        errors.push('Missing "jokes" field');
+      } else if (!Array.isArray(record.jokes)) {
+        errors.push('"jokes" is not an array');
+      } else if (record.jokes.length !== expectedCount) {
+        errors.push(`Expected ${expectedCount} jokes, got ${record.jokes.length}`);
+      }
+      
+      if (!('diagnostics' in record)) {
+        errors.push('Missing "diagnostics" field');
+      } else if (!Array.isArray(record.diagnostics)) {
+        errors.push('"diagnostics" is not an array');
+      } else if (Array.isArray(record.jokes) && record.diagnostics.length !== record.jokes.length) {
+        errors.push(`Diagnostics count (${record.diagnostics.length}) doesn't match jokes count (${record.jokes.length})`);
+      } else if (Array.isArray(record.diagnostics)) {
+        // Check each diagnostic
+        record.diagnostics.forEach((diag, idx) => {
+          if (!isJokeDiagnostics(diag)) {
+            errors.push(`Diagnostics[${idx}] is invalid`);
+          }
+        });
+      }
+    }
+    
+    throw new Error(
+      `Response JSON did not match expected joke diagnostics schema: ${errors.join('; ')}`
+    );
   }
 
   const normalizedJokes = normalizeJokes(parsed.jokes);
@@ -139,7 +185,7 @@ export function parseJokeGenResponse(raw: string, expectedCount: number): JokeGe
 
   return {
     jokes: normalizedJokes,
-    diagnostics: parsed.diagnostics,
+    diagnostics: parsed.diagnostics || [], // Default to empty array if missing
   };
 }
 

@@ -12,7 +12,8 @@
     "backfill-chunks": "tsx scripts/backfillChunks.ts",
     "test-nlp": "tsx scripts/testNLP.ts",
     "test:comedy": "tsx scripts/comedyPipelineTests.ts",
-    "test:joke-diagnostics": "tsx scripts/jokeDiagnosticsTests.ts"
+    "test:joke-diagnostics": "tsx scripts/jokeDiagnosticsTests.ts",
+    "test:two-step-pipeline": "tsx scripts/testTwoStepPipeline.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

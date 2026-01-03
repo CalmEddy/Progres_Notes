@@ -21,6 +21,9 @@ export default function ChatInterface() {
   const [jokeCount, setJokeCount] = useState(10);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [baseJokes, setBaseJokes] = useState<string[] | null>(null); // Deprecated: for backward compatibility
+  const [selectedPremises, setSelectedPremises] = useState<Array<{world: string, premise: string}> | null>(null);
+  const [showBaseJokesModal, setShowBaseJokesModal] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -62,6 +65,7 @@ export default function ChatInterface() {
     if (comedyMode && aiEnabled) {
       // Comedy Mode: Generate jokes
       setIsLoading(true);
+      setBaseJokes(null); // Clear previous base jokes
 
       try {
         const headers = await getAuthHeaders();
@@ -84,6 +88,19 @@ export default function ChatInterface() {
         }
 
         const result = await response.json();
+        
+        // Store base jokes for debugging (backward compatibility)
+        if (result.baseJokes && Array.isArray(result.baseJokes)) {
+          setBaseJokes(result.baseJokes);
+        }
+        
+        // Store selected premises (the ones sent to rewrite step)
+        if (result.selectedPremises && Array.isArray(result.selectedPremises)) {
+          setSelectedPremises(result.selectedPremises);
+        } else if (result.baseJokes && Array.isArray(result.baseJokes)) {
+          // Fallback: if selectedPremises not available, use baseJokes
+          setSelectedPremises(result.baseJokes.map((p: string) => ({ world: 'unspecified', premise: p })));
+        }
         
         // Add assistant message with jokes
         setMessages(prev => [
@@ -326,14 +343,33 @@ export default function ChatInterface() {
           </div>
         )}
 
-        {messages.map((message, index) => (
-          <MessageBubble
-            key={index}
-            role={message.role}
-            content={message.content}
-            isStreaming={isStreaming && index === messages.length - 1 && message.role === 'assistant'}
-          />
-        ))}
+        {messages.map((message, index) => {
+          // Find if this is the last assistant message
+          const isLastAssistant = message.role === 'assistant' && 
+            !messages.slice(index + 1).some(m => m.role === 'assistant');
+          
+          return (
+            <div key={index}>
+              <MessageBubble
+                role={message.role}
+                content={message.content}
+                isStreaming={isStreaming && index === messages.length - 1 && message.role === 'assistant'}
+              />
+              {/* Show debug button for the last assistant message when selected premises are available */}
+              {message.role === 'assistant' && selectedPremises && isLastAssistant && (
+                <div className="mt-2 ml-4">
+                  <button
+                    onClick={() => setShowBaseJokesModal(true)}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                    title="View premises sent to rewrite step"
+                  >
+                    View Selected Premises ({selectedPremises.length})
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         {error && (
           <div className="alert-error mt-4">
@@ -343,6 +379,49 @@ export default function ChatInterface() {
 
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Selected Premises Debug Modal */}
+      {showBaseJokesModal && selectedPremises && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Selected Premises (Sent to Rewrite)
+              </h2>
+              <button
+                onClick={() => setShowBaseJokesModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Close"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-4 overflow-y-auto flex-1">
+              <p className="text-sm text-gray-600 mb-4">
+                These are the {selectedPremises.length} premises that were selected and sent to the rewrite step (REWRITE_DEVELOPER_PROMPT_SNAPSHOT_ESCALATION_FINAL). These are the inputs used to generate the final jokes you see above.
+              </p>
+              <ol className="space-y-3 list-decimal list-inside">
+                {selectedPremises.map((item, index) => (
+                  <li key={index} className="text-sm text-gray-800 pl-2">
+                    <span className="font-semibold text-purple-600">[{item.world}]</span>{' '}
+                    {item.premise}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setShowBaseJokesModal(false)}
+                className="btn-secondary text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Input Area */}
       <div className="bg-white border-t border-gray-200 px-6 py-4">
