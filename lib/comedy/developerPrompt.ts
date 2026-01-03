@@ -1,102 +1,31 @@
-// STEP 1 (Base): Generate *premise notes*, not jokes.
-export const BASE_PREMISE_GENERATION_DEVELOPER_PROMPT = `You are generating PREMISE NOTES for stand-up comedy.
+// STEP 1 (Base): Generate collision-driven observational notes
+export const BASE_PREMISE_GENERATION_DEVELOPER_PROMPT = `You are generating observational material.
 
-PRE-THINK (SILENT)
-Silently identify 8–12 DISTINCT WORLD CONSTRAINTS under which the topic breaks down.
-A world constraint is a rule about how reality behaves in the moment (not a theme, not an opinion).
-
-Choose world constraints like these (use only if relevant):
-- enforcement / rule applied
-- access denied / locked out
-- time pressure / deadline
-- time stall / waiting
-- responsibility assigned / blame
-- coordination failure / miscommunication
-- financial penalty / fee
-- information revealed too late
-- control lost / unstoppable process
-- public exposure / social scrutiny
-- safety risk / near-miss
-- procedural friction / paperwork
-
-Generate items by selecting across different world constraints.
-Do NOT reuse the same world constraint more than twice.
-
-VALIDITY TEST (SILENT)
-Each premise must only make sense under its world constraint.
-If the same sentence would work under a different world constraint, revise it.
-
-PRIMARY GOAL
-Produce rewriteable, single-line premises that describe a concrete situation
-where something is already going wrong or becoming uncomfortable.
+The goal is to surface diverse, rewriteable, single-sentence collision notes.
+A collision occurs when an object, action, or situation is forced to operate under the wrong rule set (misapplied function, wrong tool, wrong standard, wrong purpose).
 
 These are NOT jokes.
-They are compact scene seeds describing ONE specific moment of tension.
+Do not write punchlines. Do not "be funny." Do not use joke templates.
 
-DRAFT GENERATION RULES (NON-NEGOTIABLE)
-- EXACTLY ONE sentence per premise.
-- 8–20 words per premise.
-- Describe ONE moment only.
-- Start inside the moment (no setup language).
-- Prefer literal actions/behaviors/constraints over opinions.
-- Include at least one concrete action, object, or behavior.
+METHOD (SILENT)
+- Expand context around the topic: objects, actions, tools, processes, settings, substitutes, opposites, and meaning drift.
+- Take one hop outward from strong context items to find adjacent, aligned elements that increase rule distance without breaking legibility.
+- Generate notes that explicitly state the collision on the page. Do not rely on inference.
 
-DO NOT WRITE
-- Finished jokes or punchlines.
-- General observations or summaries.
-- Analogy-thesis framing ("X is like Y", "People are like…").
-- Lists or balanced comparisons by default.
-- Similes ("like…", "as if…") unless unavoidable.
-- Abstract traits ("awkward", "toxic", "annoying").
-- "Meanwhile," "always," "never," or sweeping generalizations.
-
-VARIETY REQUIREMENT
-Across the set, avoid repeating the same framing or ending pattern.
-Do not reuse the same key object/detail in more than one premise unless necessary.
-
-STRUCTURAL DIVERSITY CONSTRAINTS (NON-NEGOTIABLE)
-
-Across the full set of premises:
-- Do NOT reuse the same sentence structure more than twice.
-- Do NOT default to one agent acting while another passively observes.
-
-WORLD CONSTRAINT INTEGRITY (NON-NEGOTIABLE)
-If the world constraint is enforcement/procedure/logistics/finance/access/time:
-the tension must be CAUSED by that constraint acting on the situation
-(enforced, denied, blocked, interrupted, delayed, charged, fined, reported, or confronted),
-not merely mentioned as background.
-
-STAKE FLOOR (NON-NEGOTIABLE)
-Avoid minor or easily ignored outcomes.
-Each premise must include a concrete consequence or constraint that demands attention
-(damage, interruption, denial, confrontation, penalty, missed deadline,
-loss of access, or safety risk).
-
-Ensure coverage across DIFFERENT sources of tension, such as:
-- an action creating an immediate problem
-- an existing problem being discovered
-- an interruption or time pressure
-- a rule, restriction, or authority being enforced
-- responsibility or blame becoming unavoidable
-- property, access, or control being lost or damaged
-
-Across premises, vary:
-- who or what initiates the tension
-- who or what is affected by it
-- whether the tension is social, logistical, physical, or procedural
-
-If multiple premises feel interchangeable except for surface details,
-rewrite later ones to introduce a different source of tension.
-
-SELF-CHECK (SILENT)
-Before outputting, rewrite any item that violates rules while keeping the total count unchanged.
+ITEM RULES (NON-NEGOTIABLE)
+- EXACTLY one sentence per item.
+- Each item must express ONE collision or angle.
+- Each item must contain at least one concrete object or action.
+- Avoid thesis framing, listicles, and "balanced comparison" scaffolds.
+- Avoid invented agency/actions that do not arise from the topic. (No "the toast argued," etc.)
+- Vary sentence shapes across the set.
 
 OUTPUT FORMAT (STRICT)
-Return a SINGLE JSON object with EXACTLY this structure and nothing else:
+Return valid JSON only in exactly this shape:
 
 {
   "items": [
-    { "world": "world_constraint_label", "premise": "one sentence premise" }
+    { "world": "unspecified", "premise": "one sentence collision note" }
   ]
 }
 `;
@@ -104,107 +33,49 @@ Return a SINGLE JSON object with EXACTLY this structure and nothing else:
 // Backward compatibility alias
 export const BASE_GENERATION_DEVELOPER_PROMPT_FINAL = BASE_PREMISE_GENERATION_DEVELOPER_PROMPT;
 
-export const REWRITE_DEVELOPER_PROMPT_SNAPSHOT_ESCALATION_FINAL = `
-You are rewriting stand-up jokes to professional, club-ready quality.
+export const REWRITE_DEVELOPER_PROMPT_SNAPSHOT_ESCALATION_FINAL = `You are re-authoring observational material.
 
-PRIMARY GOAL
-Re-author each joke from scratch using the underlying premise only.
-The final joke must feel like a new piece of writing, not an improved version of the original.
+The input text is raw material generated by an earlier step.
+It represents an observation built around a specific collision
+(a mismatch, misapplication, or wrong rule set).
 
---------------------------------------------------
-CRITICAL INSTRUCTION (NON-NEGOTIABLE)
---------------------------------------------------
+Your task is to re-express this material in a specified voice or style.
 
-You are NOT editing or polishing the original joke text.
+IMPORTANT GUIDELINES:
 
-The original joke is a rough note describing a situation.
-You MUST IGNORE its wording, structure, comparisons, and analogies.
+– Ignore the original wording, sentence structure, and phrasing.
+– Preserve the underlying collision and the overall sentiment.
+– Maintain explicit reference to the key anchor elements that create the collision (the compared items).
+  Do not drop either side of the comparison during re-authoring.
+– Do not remove, replace, or generalize away the specific element that creates the collision.
+  The defining objects or concepts involved in the collision must remain identifiable
+  in the re-authored version.
+– Do not replace the collision with a different idea.
+– Do not reverse or alter the stance of the observation.
 
-If your rewrite preserves:
-- obvious phrasing
-- analogy-based structure
-- list formatting
-- comparison framing (e.g. "X is like Y")
+You may:
+– Substitute words and phrases freely.
+– Change sentence structure, rhythm, and length.
+– Expand into multiple lines if the voice or style calls for it.
+– Introduce supporting language, imagery, or tags that help express
+  the same collision more effectively in the given style.
 
-then the rewrite has FAILED.
+Do not:
+– Evaluate the quality of the idea.
+– Filter, rank, or judge the material.
+– Introduce a new or different collision.
+– Add meta commentary or explanation.
 
---------------------------------------------------
-CORE REWRITE CONSTRAINT (NON-NEGOTIABLE)
---------------------------------------------------
-
-The original joke provides the PREMISE only.
-You may discard ALL original wording.
-Your job is to re-author the joke, not improve it.
-
---------------------------------------------------
-REWRITE METHOD (SNAPSHOT ESCALATION)
---------------------------------------------------
-
-Rewrite the joke by:
-- choosing ONE specific moment that proves why the situation is unbearable
-- placing the speaker directly inside that moment
-- starting as close to the chaos as possible
-- ending on a concrete, uncomfortable image or action
-
-Prefer ONE snapshot moment over balanced comparisons. Do NOT preserve a symmetrical "A does X; B does Y" structure. If both sides appear, the SECOND beat must land as an action (not an attitude) and function as the punchline.
-
-Write as if the audience walked in halfway through the disaster.
-
---------------------------------------------------
-OPTIONAL TOOL (NOT REQUIRED)
---------------------------------------------------
-
-If it strengthens the moment, the situation may be witnessed by others
-(strangers, staff, bystanders, family members).
-
-Witnesses are optional, not mandatory.
-
---------------------------------------------------
-WHAT NOT TO DO
---------------------------------------------------
-
-Do NOT:
-- summarize or restate the premise
-- explain why the situation is stressful
-- argue an opinion or comparison
-- use decorative metaphors or similes ("like…", "as if…") unless the comparison IS the final image itself
-- end on attitudes, realizations, commentary, or judgments
-- add tags, reactions, or extra narration after the punchline
-- include more than one example or moment per joke
-- preserve the original joke's framing, structure, or analogy patterns
-
---------------------------------------------------
-PUNCHLINE ENFORCEMENT
---------------------------------------------------
-
-- Do NOT end the joke on a description, personality trait, or implied attitude.
-- The punchline must be a concrete action, reaction, or decision that happens in the moment.
-- If the joke contains two beats, the SECOND beat must be the punchline and must escalate or finalize the situation.
-- Avoid soft contrast endings where both sides are merely described; one side must land as the punch.
-
---------------------------------------------------
-STRUCTURE RULES (NON-NEGOTIABLE)
---------------------------------------------------
-
-- Write one complete stand-up joke.
-- The punchline MUST be the final sentence.
-- No sentences may follow the punchline.
-- 1–2 sentences preferred; 3 only if absolutely necessary.
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT — NON-NEGOTIABLE)
---------------------------------------------------
-
-Return a SINGLE JSON object with exactly this field:
+OUTPUT FORMAT (STRICT)
+Return valid JSON only in exactly this shape:
 
 {
-  "jokes": [string, string, ...]
+  "jokes": [
+    { "world": "<copied from input if provided>", "premise": "<copied from input>", "text": "<re-authored output text>" }
+  ]
 }
 
-Rules:
-- jokes.length MUST equal the requested number.
-- Output MUST be valid JSON only.
-- Do NOT include explanations, prose, or extra keys.
+Return the same number of objects as inputs, in the same order.
 `;
 
 export const SIMPLIFIED_DEVELOPER_PROMPT = `You are generating original, performance-ready stand-up jokes on the user's topic.

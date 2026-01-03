@@ -19,6 +19,8 @@ export default function ChatInterface() {
   const [aiEnabled, setAiEnabled] = useState(true);
   const [comedyMode, setComedyMode] = useState(false);
   const [jokeCount, setJokeCount] = useState(10);
+  const [styleContractId, setStyleContractId] = useState<string>('warm_physical_storyteller');
+  const [styleContracts, setStyleContracts] = useState<Array<{id: string; name: string; description: string}>>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baseJokes, setBaseJokes] = useState<string[] | null>(null); // Deprecated: for backward compatibility
@@ -39,6 +41,29 @@ export default function ChatInterface() {
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [input]);
+
+  // Load style contracts
+  useEffect(() => {
+    const loadStyleContracts = async () => {
+      try {
+        const headers = await getAuthHeaders();
+        const response = await fetch('/api/style-contracts', {
+          method: 'GET',
+          headers,
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setStyleContracts(data.contracts || []);
+        }
+      } catch (err) {
+        console.error('Error loading style contracts:', err);
+        // Don't show error to user, just use defaults
+      }
+    };
+
+    loadStyleContracts();
+  }, []);
 
   const getAuthHeaders = async () => {
     const supabase = createSupabaseClient();
@@ -75,6 +100,7 @@ export default function ChatInterface() {
           body: JSON.stringify({
             topic: userMessage,
             jokeCount: jokeCount,
+            styleContractId: styleContractId,
           }),
         });
 
@@ -426,25 +452,45 @@ export default function ChatInterface() {
       {/* Input Area */}
       <div className="bg-white border-t border-gray-200 px-6 py-4">
         {comedyMode && aiEnabled && (
-          <div className="mb-3">
-            <label htmlFor="joke-count" className="block text-sm font-medium text-gray-700 mb-1">
-              Number of Jokes
-            </label>
-            <input
-              id="joke-count"
-              type="number"
-              min="1"
-              max="25"
-              value={jokeCount}
-              onChange={(e) => {
-                const value = parseInt(e.target.value, 10);
-                if (!isNaN(value) && value >= 1 && value <= 25) {
-                  setJokeCount(value);
-                }
-              }}
-              className="input-field w-24"
-              disabled={isLoading}
-            />
+          <div className="mb-3 flex gap-4">
+            <div>
+              <label htmlFor="joke-count" className="block text-sm font-medium text-gray-700 mb-1">
+                Number of Jokes
+              </label>
+              <input
+                id="joke-count"
+                type="number"
+                min="1"
+                max="25"
+                value={jokeCount}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value, 10);
+                  if (!isNaN(value) && value >= 1 && value <= 25) {
+                    setJokeCount(value);
+                  }
+                }}
+                className="input-field w-24"
+                disabled={isLoading}
+              />
+            </div>
+            <div className="flex-1">
+              <label htmlFor="style-contract" className="block text-sm font-medium text-gray-700 mb-1">
+                Style
+              </label>
+              <select
+                id="style-contract"
+                value={styleContractId}
+                onChange={(e) => setStyleContractId(e.target.value)}
+                className="input-field w-full"
+                disabled={isLoading}
+              >
+                {styleContracts.map((contract) => (
+                  <option key={contract.id} value={contract.id}>
+                    {contract.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
         <div className="flex items-end gap-3">

@@ -5,35 +5,23 @@
  * behavior and output requirements.
  */
 
-// STEP 1 (Base): premise-note generation system prompt (JSON + "not funny" discipline)
+// STEP 1 (Base): collision-note generation system prompt (format-only, JSON-only)
 export const SYSTEM_PROMPT_BASE_PREMISES = `You are a writing assistant that outputs structured text for downstream processing.
 
 OUTPUT RULES (NON-NEGOTIABLE)
 - Output must be valid JSON only.
 - Do not include explanations, commentary, or formatting.
 - Follow the requested structure exactly.
-
-CONTENT RULES
-- Do NOT write finished jokes.
-- Do NOT write punchlines.
-- Do NOT attempt humor or commentary.
-- Avoid first-person narration unless required by the moment.
-
-Your job is to generate clean, compact premise notes that will be rewritten later.
 `;
 
-// STEP 2 (Rewrite): format-only system prompt (avoid "invent stakes" / interpretation overload here)
-export const SYSTEM_PROMPT_REWRITE = `You are a comedy writing assistant.
+// STEP 2 (Rewrite): format-only system prompt (no genre priming)
+export const SYSTEM_PROMPT_REWRITE = `You are a writing assistant that outputs structured text for downstream processing.
 
 OUTPUT RULES (NON-NEGOTIABLE)
 - Output must be valid JSON only.
-- Joke text must be plain text (no markdown, no emojis).
+- Text must be plain text (no markdown, no emojis).
 - No explanations or commentary.
-
-FORMAT RULES
-- Each output must be a complete stand-up joke.
-- Punchline must be the final sentence.
-- No text after the punchline.
+- Follow the requested structure exactly.
 `;
 
 // (Optional) Keep your previous system prompt export if other parts of the app still import it.

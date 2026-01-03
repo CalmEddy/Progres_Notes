@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { generateComedy } from '@/lib/comedy/generateComedy';
 import { createNoteForUser } from '@/lib/notes';
+import { getStyleContract, StyleContract } from '@/lib/comedy/styleContracts';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -39,7 +40,7 @@ async function getSessionFromRequest(request: NextRequest) {
 /**
  * POST /api/comedy/generate
  * 
- * Generate comedy jokes based on topic and joke count
+ * Generate comedy material based on topic and count
  * 
  * Request body:
  * - topic: string (required)
@@ -47,7 +48,7 @@ async function getSessionFromRequest(request: NextRequest) {
  * 
  * Response:
  * - text: string - Full text output
- * - chunks: string[] - Jokes split by blank lines
+ * - chunks: string[] - Material split by blank lines
  * - diagnostics: JokeDiagnostics[] - Diagnostics aligned to chunks
  * - note: object - Created note information (id, title, created_at)
  */
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { topic, jokeCount, clean } = body;
+    const { topic, jokeCount, clean, styleContractId } = body;
 
     // Validate topic
     if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
@@ -85,16 +86,37 @@ export async function POST(request: NextRequest) {
       count = 10; // default
     }
 
+    // Get style contract if specified
+    let styleContract: StyleContract | undefined = undefined;
+    if (styleContractId) {
+      const contract = getStyleContract(styleContractId);
+      if (!contract) {
+        return NextResponse.json(
+          { error: `Invalid styleContractId: ${styleContractId}` },
+          { status: 400 }
+        );
+      }
+      styleContract = contract;
+    }
+
     // Generate comedy
     const result = await generateComedy({
       topic: topic.trim(),
       jokeCount: count,
       clean: clean !== false, // default to true
+      styleContract,
     });
 
-    // Convert JokePair[] to string[] for backward compatibility
-    // For now, use joke 'a' from each pair. In the future, we might want to return both options.
-    const jokeStrings = result.jokes.map((pair) => pair.a);
+    // Extract text from RewrittenItem[] format
+    const jokeStrings = result.jokes.map((item) => {
+      if ('text' in item) {
+        return item.text;
+      } else if ('a' in item) {
+        // Legacy format fallback
+        return item.a;
+      }
+      throw new Error('Invalid joke format in response');
+    });
     const text = jokeStrings.join('\n\n');
     const chunks = jokeStrings;
 

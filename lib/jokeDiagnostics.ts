@@ -30,10 +30,10 @@ export interface JokeDiagnostics {
   specificity: Specificity;
 }
 
-export interface JokeGenResponse {
-  // Each input item yields two joke options.
-  jokes: JokePair[];
-  diagnostics?: JokeDiagnostics[]; // Optional since prompts no longer return diagnostics
+export interface RewrittenItem {
+  world: string;
+  premise: string;
+  text: string;
 }
 
 export interface JokePair {
@@ -41,6 +41,27 @@ export interface JokePair {
   premise?: string;
   a: string;
   b: string;
+}
+
+/**
+ * Type guard to check if an item is a RewrittenItem (new format)
+ */
+export function isRewrittenItem(item: RewrittenItem | JokePair): item is RewrittenItem {
+  return 'text' in item && typeof item.text === 'string';
+}
+
+/**
+ * Type guard to check if an item is a JokePair (legacy format)
+ */
+export function isJokePair(item: RewrittenItem | JokePair): item is JokePair {
+  return 'a' in item && 'b' in item && typeof item.a === 'string' && typeof item.b === 'string';
+}
+
+export interface JokeGenResponse {
+  // New format: RewrittenItem[] with text property
+  // Legacy format: JokePair[] with a/b properties (for backward compatibility)
+  jokes: Array<RewrittenItem | JokePair>;
+  diagnostics?: JokeDiagnostics[]; // Optional since prompts no longer return diagnostics
 }
 
 const RESOLUTION_TYPES: ResolutionType[] = [

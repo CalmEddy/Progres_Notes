@@ -2,8 +2,8 @@
  * Comedy Generation Service
  *
  * Two-step pipeline:
- * 1. Base generation: Generate many draft jokes (N_base = max(12, N_final * 3))
- * 2. Rewrite pass: Re-author selected drafts into club-ready jokes
+ * 1. Base generation: Generate collision-driven observational notes (N_base = max(12, N_final * 3))
+ * 2. Rewrite pass: Re-author selected notes with voice/style contracts into final material
  */
 
 import { getOpenAIClient } from '@/lib/openaiClient';
@@ -14,6 +14,7 @@ import {
 } from './developerPrompt';
 import {
   JokeGenResponse,
+  RewrittenItem,
   JokePair,
   JokeDiagnostics,
   PUNCH_STRENGTH_RANK,
@@ -21,6 +22,7 @@ import {
   SPECIFICITY_RANK,
 } from '@/lib/jokeDiagnostics';
 import { normalizePremise } from './normalizePremise';
+import { getDefaultStyleContract, StyleContract } from './styleContracts';
 
 export interface ComedyGenerationConfig {
   enableRewrite?: boolean; // default: true
@@ -34,6 +36,7 @@ export interface GenerateComedyParams {
   topic: string;
   jokeCount: number; // N_final
   clean?: boolean;
+  styleContract?: StyleContract; // optional style contract for re-authoring
   config?: ComedyGenerationConfig; // optional config override
 }
 
@@ -68,7 +71,7 @@ function getDefaultConfig(): Required<ComedyGenerationConfig> {
 }
 
 function buildUserMessage(topic: string, premiseCount: number, cleanLabel: string) {
-  return `Topic:\n${topic}\n\nGenerate ${premiseCount} PREMISE NOTES.\n\nEach premise must:\n- Be EXACTLY one sentence\n- Describe ONE specific moment\n- Include at least one concrete action, object, or behavior\n- Avoid punchlines, conclusions, or opinions\n\nReturn them as a JSON array under the key "premises".`;
+  return `Topic:\n${topic}\n\nGenerate ${premiseCount} collision notes.\n\nEach note must:\n- Be EXACTLY one sentence\n- Express one collision or angle\n- Include at least one concrete object or action\n\nReturn them as JSON with the key "items".`;
 }
 
 function redactContent(content: string, maxLength: number = 50): string {
@@ -184,7 +187,7 @@ function selectPremisesForRewrite(
 }
 
 /**
- * Step 2: Rewrite selected drafts into club-ready jokes
+ * Step 2: Re-author selected collision notes with voice/style contracts
  */
 async function rewriteJokes({
   items,
@@ -192,56 +195,48 @@ async function rewriteJokes({
   jokeCount,
   temperature,
   addReminder,
+  styleContract,
 }: {
   items: WorldPremiseItem[];
   topic: string;
   jokeCount: number;
   temperature: number;
   addReminder: boolean;
+  styleContract: StyleContract;
 }): Promise<JokeGenResponse> {
   const openai = getOpenAIClient();
 
   // Normalize premises to prevent analogy/listicle framing from contaminating rewrite.
-  // Keep world tags explicit so the rewrite can treat the constraint as "physics."
   const normalizedItems = items.map((it) => ({
     world: it.world,
     premise: normalizePremise(it.premise),
   }));
 
   const normalizedItemsList = normalizedItems
-    .map((it, index) => `${index + 1}. [world=${it.world}] ${it.premise}`)
+    .map((it, index) => `${index + 1}. { "world": "${it.world}", "premise": "${it.premise}" }`)
     .join('\n');
-  
-  // Rewrite: TWO joke options per item (A/B). Output JSON objects, not string arrays.
-  const userMessage = `Rewrite each item below into TWO stand-up jokes (A and B).
 
-Rules:
-- Treat each input as premise-only raw material; discard wording completely.
-- The world tag is the scene's physics: the constraint must actively force the outcome.
-- Start inside a specific moment (mid-disaster).
-- 1–2 sentences per joke (3 only if necessary).
-- The FINAL sentence must be the punchline.
-- The punchline must be a concrete, externally visible action or consequence.
-- Joke A and Joke B must end in DIFFERENT consequences (not just rewording).
+  // Build style contract JSON for the user message
+  const styleContractJson = JSON.stringify(styleContract, null, 2);
 
-BANS:
-- No thesis comparisons ("X is like…", "People are…").
-- No similes ("like", "as if").
-- No commentary/vibe endings ("I guess", "anyway", "whatever", "makes you think").
-- No rhetorical questions as the punchline.
+  // Re-author each item using the style contract
+  const userMessage = `Re-author each item below using the provided style contract.
+
+STYLE CONTRACT:
+${styleContractJson}
+
+ITEMS:
+${normalizedItemsList}
 
 OUTPUT FORMAT (STRICT):
 Return valid JSON only, in this exact shape:
 {
   "jokes": [
-    { "world": "<world>", "premise": "<premise>", "a": "<joke A>", "b": "<joke B>" }
+    { "world": "<copied from input>", "premise": "<copied from input>", "text": "<re-authored output text>" }
   ]
 }
 
-Return the same number of objects as inputs, in the same order.
-
-ITEMS:
-${normalizedItemsList}`;
+Return the same number of objects as inputs, in the same order.`;
 
   const maxTokens = Math.min(220 * jokeCount, 3600);
 
@@ -271,8 +266,7 @@ ${normalizedItemsList}`;
     model: REWRITE_MODEL,
     messages,
     response_format: { type: 'json_object' },
-    // Rewrite wants commitment and compression, not novelty-wandering.
-    temperature: 0.5,
+    temperature,
     top_p: 1,
     presence_penalty: 0,
     frequency_penalty: 0,
@@ -285,7 +279,6 @@ ${normalizedItemsList}`;
     throw new Error('Empty response from OpenAI');
   }
 
-  // Parse inline to avoid schema mismatch with the new {world,premise,a,b} structure.
   let parsed: any;
   try {
     parsed = JSON.parse(outputText.trim());
@@ -299,10 +292,9 @@ ${normalizedItemsList}`;
   if (!Array.isArray(jokesRaw)) {
     const redactedOutput = redactContent(outputText, 500);
     console.error(`[Rewrite] Missing "jokes" array. Response preview: ${redactedOutput}`);
-    throw new Error('Rewrite must return {"jokes":[{world,premise,a,b}, ...]}.');
+    throw new Error('Rewrite must return {"jokes":[...]}.');
   }
 
-  // Keep order; enforce count match if possible. If model returns fewer, hard fail to avoid silent drift.
   if (jokesRaw.length !== jokeCount) {
     const redactedOutput = redactContent(outputText, 500);
     console.error(
@@ -311,35 +303,48 @@ ${normalizedItemsList}`;
     throw new Error(`Rewrite must return exactly ${jokeCount} joke objects.`);
   }
 
-  const jokes = jokesRaw.map((j: any, idx: number) => {
-    const world = typeof j?.world === 'string' ? j.world : normalizedItems[idx]?.world;
-    const premise = typeof j?.premise === 'string' ? j.premise : normalizedItems[idx]?.premise;
-    const a = typeof j?.a === 'string' ? j.a : '';
-    const b = typeof j?.b === 'string' ? j.b : '';
-    if (!a.trim() || !b.trim()) {
-      throw new Error(`Rewrite joke object at index ${idx} must include non-empty "a" and "b".`);
+  // Parse new format: {world, premise, text}
+  // Support legacy format as fallback: {world, premise, a, b}
+  const jokes: Array<RewrittenItem | JokePair> = jokesRaw.map((j: any, idx: number) => {
+    const world = typeof j?.world === 'string' ? j.world : normalizedItems[idx]?.world || 'unspecified';
+    const premise = typeof j?.premise === 'string' ? j.premise : normalizedItems[idx]?.premise || '';
+
+    // Check for new format (text property)
+    if (typeof j?.text === 'string' && j.text.trim()) {
+      return { world, premise, text: j.text.trim() };
     }
-    return { world, premise, a, b };
+
+    // Fallback to legacy format (a/b properties)
+    if (typeof j?.a === 'string' && j.a.trim() && typeof j?.b === 'string' && j.b.trim()) {
+      // Convert legacy format to new format by using 'a' as the text
+      return { world, premise, text: j.a.trim() };
+    }
+
+    // Validation: must have either text or a/b
+    throw new Error(
+      `Rewrite joke object at index ${idx} must include non-empty "text" (or "a"/"b" for legacy format).`
+    );
   });
 
   return { jokes };
 }
 
 /**
- * Generate comedy jokes with diagnostics using two-step pipeline
+ * Generate comedy material using two-step pipeline
  *
  * Pipeline:
- * 1. Base generation: Generate N_base drafts
- * 2. Selection: Filter and select top K drafts
- * 3. Rewrite: Re-author selected drafts into club-ready jokes
+ * 1. Base generation: Generate N_base collision notes
+ * 2. Selection: Select top K notes for rewriting
+ * 3. Rewrite: Re-author selected notes with voice/style contracts into final material
  *
  * @param params - Generation parameters
- * @returns JSON response with jokes, aligned diagnostics, and base jokes (for debugging)
+ * @returns JSON response with re-authored material and base notes (for debugging)
  */
 export async function generateComedy({
   topic,
   jokeCount,
   clean = true,
+  styleContract,
   config = {},
 }: GenerateComedyParams): Promise<GenerateComedyResponse> {
   const finalConfig = { ...getDefaultConfig(), ...config };
@@ -405,19 +410,21 @@ export async function generateComedy({
     }
   }
 
-  // If rewrite is disabled, we can't return jokes without rewriting, so throw an error
-  // (or we could rewrite them anyway, but that defeats the purpose of the flag)
+  // If rewrite is disabled, we can't return material without rewriting, so throw an error
   if (!finalConfig.enableRewrite) {
-    throw new Error('Rewrite is disabled but required to convert premises to jokes');
+    throw new Error('Rewrite is disabled but required to convert notes to final material');
   }
 
-  // Step 1b: Select premises for rewriting
+  // Step 1b: Select notes for rewriting
   const selected = selectPremisesForRewrite(baseResponse, jokeCount);
   console.log(
     `[Comedy Generation] Selected ${selected.length} items for rewriting from ${baseResponse.items.length} base items`
   );
 
-  // Step 2: Rewrite selected premises
+  // Use provided style contract or default
+  const contractToUse = styleContract || getDefaultStyleContract();
+
+  // Step 2: Re-author selected notes
   try {
     const rewrittenResponse = await rewriteJokes({
       items: selected,
@@ -425,9 +432,10 @@ export async function generateComedy({
       jokeCount,
       temperature: finalConfig.rewriteTemperature,
       addReminder: false,
+      styleContract: contractToUse,
     });
     console.log(
-      `[Comedy Generation] Rewrite successful: ${rewrittenResponse.jokes.length} joke pairs rewritten`
+      `[Comedy Generation] Rewrite successful: ${rewrittenResponse.jokes.length} items rewritten`
     );
     return {
       ...rewrittenResponse,
@@ -445,9 +453,10 @@ export async function generateComedy({
         jokeCount,
         temperature: finalConfig.rewriteTemperature,
         addReminder: true,
+        styleContract: contractToUse,
       });
       console.log(
-        `[Comedy Generation] Rewrite retry successful: ${rewrittenResponse.jokes.length} joke pairs rewritten`
+        `[Comedy Generation] Rewrite retry successful: ${rewrittenResponse.jokes.length} items rewritten`
       );
       return {
         ...rewrittenResponse,
@@ -460,8 +469,8 @@ export async function generateComedy({
           errorMsg
         )}`
       );
-      // Can't fallback to base premises since they're not jokes
-      throw new Error(`Failed to rewrite premises into jokes: ${errorMsg}`);
+      // Can't fallback to base notes since they're not final material
+      throw new Error(`Failed to rewrite notes into final material: ${errorMsg}`);
     }
   }
 }
