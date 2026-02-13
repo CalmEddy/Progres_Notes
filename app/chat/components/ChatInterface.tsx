@@ -10,6 +10,8 @@ interface Message {
   content: string;
 }
 
+type ComedyOutputMode = 'standard' | 'overlapReport';
+
 export default function ChatInterface() {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -21,11 +23,13 @@ export default function ChatInterface() {
   const [jokeCount, setJokeCount] = useState(10);
   const [styleContractId, setStyleContractId] = useState<string>('warm_physical_storyteller');
   const [styleContracts, setStyleContracts] = useState<Array<{id: string; name: string; description: string}>>([]);
+  const [outputMode, setOutputMode] = useState<ComedyOutputMode>('standard');
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [baseJokes, setBaseJokes] = useState<string[] | null>(null); // Deprecated: for backward compatibility
   const [selectedPremises, setSelectedPremises] = useState<Array<{world: string, premise: string}> | null>(null);
   const [showBaseJokesModal, setShowBaseJokesModal] = useState(false);
+  const [lastGeneratedReport, setLastGeneratedReport] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -54,7 +58,15 @@ export default function ChatInterface() {
 
         if (response.ok) {
           const data = await response.json();
-          setStyleContracts(data.contracts || []);
+          const curatedStyleIds = [
+            'warm_physical_storyteller',
+            'obsessive_precision_ranter',
+            'cold_minimalist_observer',
+            'hyper_logical_literalist',
+            'cheerfully_misguided_optimist',
+          ];
+          const filtered = (data.contracts || []).filter((contract: { id: string }) => curatedStyleIds.includes(contract.id));
+          setStyleContracts(filtered);
         }
       } catch (err) {
         console.error('Error loading style contracts:', err);
@@ -91,6 +103,7 @@ export default function ChatInterface() {
       // Comedy Mode: Generate jokes
       setIsLoading(true);
       setBaseJokes(null); // Clear previous base jokes
+      setLastGeneratedReport(null);
 
       try {
         const headers = await getAuthHeaders();
@@ -101,6 +114,7 @@ export default function ChatInterface() {
             topic: userMessage,
             jokeCount: jokeCount,
             styleContractId: styleContractId,
+            outputMode,
           }),
         });
 
@@ -115,30 +129,35 @@ export default function ChatInterface() {
 
         const result = await response.json();
         
-        // Store base jokes for debugging (backward compatibility)
-        if (result.baseJokes && Array.isArray(result.baseJokes)) {
-          setBaseJokes(result.baseJokes);
+        if (result.outputMode === 'overlapReport' && typeof result.report === 'string') {
+          setSelectedPremises(null);
+          setLastGeneratedReport(result.report);
+          setMessages(prev => [
+            ...prev,
+            { role: 'assistant', content: result.report },
+          ]);
+        } else {
+          if (result.baseJokes && Array.isArray(result.baseJokes)) {
+            setBaseJokes(result.baseJokes);
+          }
+
+          if (result.selectedPremises && Array.isArray(result.selectedPremises)) {
+            setSelectedPremises(result.selectedPremises);
+          } else if (result.baseJokes && Array.isArray(result.baseJokes)) {
+            setSelectedPremises(result.baseJokes.map((p: string) => ({ world: 'unspecified', premise: p })));
+          }
+
+          setMessages(prev => [
+            ...prev,
+            { role: 'assistant', content: result.text },
+          ]);
         }
-        
-        // Store selected premises (the ones sent to rewrite step)
-        if (result.selectedPremises && Array.isArray(result.selectedPremises)) {
-          setSelectedPremises(result.selectedPremises);
-        } else if (result.baseJokes && Array.isArray(result.baseJokes)) {
-          // Fallback: if selectedPremises not available, use baseJokes
-          setSelectedPremises(result.baseJokes.map((p: string) => ({ world: 'unspecified', premise: p })));
-        }
-        
-        // Add assistant message with jokes
-        setMessages(prev => [
-          ...prev,
-          { role: 'assistant', content: result.text },
-        ]);
 
         // Show success message that note was saved
         if (result.note) {
           setMessages(prev => [
             ...prev,
-            { role: 'system', content: `✓ Jokes saved as note: ${result.note.title || 'Untitled'}` },
+            { role: 'system', content: `${result.outputMode === 'overlapReport' ? '✓ Report' : '✓ Jokes'} saved as note: ${result.note.title || 'Untitled'}` },
           ]);
         }
       } catch (err) {
@@ -353,14 +372,18 @@ export default function ChatInterface() {
             <div className="text-center text-gray-500">
               <p className="text-lg mb-2">
                 {comedyMode && aiEnabled 
-                  ? 'Generate comedy jokes' 
+                  ? outputMode === 'overlapReport'
+                    ? 'Generate overlap comedy reports'
+                    : 'Generate comedy jokes' 
                   : aiEnabled 
                   ? 'Start a conversation with AI' 
                   : 'Enter or paste text to save as notes'}
               </p>
               <p className="text-sm">
                 {comedyMode && aiEnabled
-                  ? 'Enter a topic below to generate jokes'
+                  ? outputMode === 'overlapReport'
+                    ? 'Enter a premise below to generate an overlap report'
+                    : 'Enter a topic below to generate jokes'
                   : aiEnabled
                   ? 'Type your message below and press Enter'
                   : 'Text will be automatically saved and processed'}
@@ -454,6 +477,21 @@ export default function ChatInterface() {
         {comedyMode && aiEnabled && (
           <div className="mb-3 flex gap-4">
             <div>
+              <label htmlFor="output-mode" className="block text-sm font-medium text-gray-700 mb-1">
+                Output
+              </label>
+              <select
+                id="output-mode"
+                value={outputMode}
+                onChange={(e) => setOutputMode(e.target.value as ComedyOutputMode)}
+                className="input-field w-60"
+                disabled={isLoading}
+              >
+                <option value="standard">Standard Comedy Output</option>
+                <option value="overlapReport">Overlap Comedy Engine Report</option>
+              </select>
+            </div>
+            <div>
               <label htmlFor="joke-count" className="block text-sm font-medium text-gray-700 mb-1">
                 Number of Jokes
               </label>
@@ -470,7 +508,7 @@ export default function ChatInterface() {
                   }
                 }}
                 className="input-field w-24"
-                disabled={isLoading}
+                disabled={isLoading || outputMode === 'overlapReport'}
               />
             </div>
             <div className="flex-1">
@@ -493,6 +531,42 @@ export default function ChatInterface() {
             </div>
           </div>
         )}
+
+        {comedyMode && aiEnabled && outputMode === 'overlapReport' && lastGeneratedReport && (
+          <div className="mb-3 flex gap-2">
+            <button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(lastGeneratedReport);
+                } catch (copyError) {
+                  console.error('Failed to copy report:', copyError);
+                }
+              }}
+              className="btn-secondary text-sm"
+              type="button"
+            >
+              Copy
+            </button>
+            <button
+              onClick={() => {
+                const blob = new Blob([lastGeneratedReport], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'overlap-analysis-report.txt';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }}
+              className="btn-secondary text-sm"
+              type="button"
+            >
+              Download .txt
+            </button>
+          </div>
+        )}
+
         <div className="flex items-end gap-3">
           <textarea
             ref={textareaRef}
@@ -501,7 +575,9 @@ export default function ChatInterface() {
             onKeyDown={handleKeyDown}
             placeholder={
               comedyMode && aiEnabled
-                ? 'Enter topic for jokes...'
+                ? outputMode === 'overlapReport'
+                  ? 'Enter premise for overlap report...'
+                  : 'Enter topic for jokes...'
                 : aiEnabled
                 ? 'Type your message...'
                 : 'Enter or paste text to save...'
@@ -530,7 +606,9 @@ export default function ChatInterface() {
         </div>
         <p className="text-xs text-gray-500 mt-2">
           {comedyMode && aiEnabled
-            ? 'Enter a topic and press Enter to generate jokes'
+            ? outputMode === 'overlapReport'
+              ? 'Enter a premise and press Enter to generate the overlap report'
+              : 'Enter a topic and press Enter to generate jokes'
             : aiEnabled
             ? 'Press Enter to send, Shift+Enter for new line'
             : 'Press Enter to save text as a note'}

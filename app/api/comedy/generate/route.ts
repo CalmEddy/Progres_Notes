@@ -1,26 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { generateComedy } from '@/lib/comedy/generateComedy';
+import { generateComedy, generateOverlapComedyReport } from '@/lib/comedy/generateComedy';
 import { createNoteForUser } from '@/lib/notes';
 import { getStyleContract, StyleContract } from '@/lib/comedy/styleContracts';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// Helper to get session from Authorization header or cookies
 async function getSessionFromRequest(request: NextRequest) {
-  // Try to get token from Authorization header first
   const authHeader = request.headers.get('Authorization');
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
     const supabase = createClient(supabaseUrl, supabaseAnonKey);
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser(token);
     if (!error && user) {
       return { user, accessToken: token };
     }
   }
 
-  // Fallback to cookies
   const cookieHeader = request.headers.get('Cookie');
   if (cookieHeader) {
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -28,7 +28,9 @@ async function getSessionFromRequest(request: NextRequest) {
         headers: { Cookie: cookieHeader },
       },
     });
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (session) {
       return { user: session.user, accessToken: session.access_token };
     }
@@ -37,20 +39,6 @@ async function getSessionFromRequest(request: NextRequest) {
   return null;
 }
 
-/**
- * POST /api/comedy/generate
- * 
- * Generate comedy material based on topic and count
- * 
- * Request body:
- * - topic: string (required)
- * - jokeCount: number (required, clamped to 1-25, defaults to 10)
- * 
- * Response:
- * - text: string - Full text output
- * - chunks: string[] - Material split by blank lines
- * - note: object - Created note information (id, title, created_at)
- */
 export async function POST(request: NextRequest) {
   try {
     const session = await getSessionFromRequest(request);
@@ -60,9 +48,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { topic, jokeCount, clean, styleContractId } = body;
+    const { topic, jokeCount, clean, styleContractId, outputMode } = body;
 
-    // Validate topic
     if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
       return NextResponse.json(
         { error: 'Topic is required and must be a non-empty string' },
@@ -70,22 +57,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate and clamp jokeCount
     let count: number;
     if (typeof jokeCount === 'number') {
       count = Math.max(1, Math.min(25, Math.round(jokeCount)));
     } else if (typeof jokeCount === 'string') {
       const parsed = parseInt(jokeCount, 10);
       if (isNaN(parsed)) {
-        count = 10; // default
+        count = 10;
       } else {
         count = Math.max(1, Math.min(25, parsed));
       }
     } else {
-      count = 10; // default
+      count = 10;
     }
 
-    // Get style contract if specified
     let styleContract: StyleContract | undefined = undefined;
     if (styleContractId) {
       const contract = getStyleContract(styleContractId);
@@ -98,44 +83,73 @@ export async function POST(request: NextRequest) {
       styleContract = contract;
     }
 
-    // Generate comedy
+    if (outputMode === 'overlapReport') {
+      const overlapResult = await generateOverlapComedyReport({
+        topic: topic.trim(),
+        styleContract,
+      });
+
+      const reportText = overlapResult.phase2.report;
+      const noteTitle = `Overlap Report: ${topic.trim()}`;
+      const note = await createNoteForUser(
+        session.user.id,
+        noteTitle,
+        reportText,
+        undefined,
+        undefined,
+        undefined,
+        session.accessToken
+      );
+
+      return NextResponse.json({
+        outputMode: 'overlapReport',
+        report: reportText,
+        phase1: overlapResult.phase1,
+        note: {
+          id: note.id,
+          title: note.title,
+          created_at: note.created_at,
+        },
+      });
+    }
+
     const result = await generateComedy({
       topic: topic.trim(),
       jokeCount: count,
-      clean: clean !== false, // default to true
+      clean: clean !== false,
       styleContract,
     });
 
-    // Extract text from RewrittenItem[] format
     const jokeStrings = result.jokes.map((item) => {
       if ('text' in item) {
         return item.text;
-      } else if ('a' in item) {
-        // Legacy format fallback
+      }
+      if ('a' in item) {
         return item.a;
       }
       throw new Error('Invalid joke format in response');
     });
+
     const text = jokeStrings.join('\n\n');
     const chunks = jokeStrings;
 
-    // Save generated jokes as a note
     const noteTitle = `Jokes about ${topic.trim()}`;
     const note = await createNoteForUser(
       session.user.id,
       noteTitle,
       text,
-      undefined, // folderId
-      undefined, // parentNoteId
-      undefined, // position
+      undefined,
+      undefined,
+      undefined,
       session.accessToken
     );
 
     return NextResponse.json({
+      outputMode: 'standard',
       text,
       chunks,
-      baseJokes: result.baseJokes, // Deprecated: for backward compatibility
-      selectedPremises: result.selectedPremises, // Selected premises sent to rewrite step
+      baseJokes: result.baseJokes,
+      selectedPremises: result.selectedPremises,
       note: {
         id: note.id,
         title: note.title,

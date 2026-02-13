@@ -10,6 +10,8 @@ import { getOpenAIClient } from '@/lib/openaiClient';
 import { SYSTEM_PROMPT_BASE_PREMISES, SYSTEM_PROMPT_REWRITE } from './systemPrompt';
 import {
   BASE_PREMISE_GENERATION_DEVELOPER_PROMPT,
+  OVERLAP_PHASE1_DEVELOPER_PROMPT,
+  OVERLAP_PHASE2_REPORT_DEVELOPER_PROMPT,
   REWRITE_DEVELOPER_PROMPT_SNAPSHOT_ESCALATION_FINAL,
 } from './developerPrompt';
 import {
@@ -40,6 +42,35 @@ export interface GenerateComedyParams {
 export interface GenerateComedyResponse extends JokeGenResponse {
   baseJokes?: string[]; // Deprecated: use selectedPremises instead
   selectedPremises?: WorldPremiseItem[]; // The selected premises sent to rewrite (for debugging)
+}
+
+export interface OverlapCoreItem {
+  world: string;
+  a: string;
+  b: string;
+  overlap: string;
+}
+
+export interface OverlapOuterItem extends OverlapCoreItem {
+  seed: string;
+}
+
+export interface OverlapCompressionItem {
+  world: string;
+  a: string;
+  b: string;
+  line: string;
+}
+
+export interface OverlapPhase1Output {
+  premise: string;
+  core: OverlapCoreItem[];
+  outer: OverlapOuterItem[];
+  compression: OverlapCompressionItem[];
+}
+
+export interface OverlapPhase2Output {
+  report: string;
 }
 
 // Base generation now returns premise notes.
@@ -74,6 +105,172 @@ function buildUserMessage(topic: string, premiseCount: number, cleanLabel: strin
 function redactContent(content: string, maxLength: number = 50): string {
   if (content.length <= maxLength) return content;
   return content.substring(0, maxLength) + '...';
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isLikelySingleSentence(value: string): boolean {
+  const trimmed = value.trim();
+  return !/[.!?].+[.!?]/.test(trimmed);
+}
+
+function validateOverlapPhase1Output(value: unknown): value is OverlapPhase1Output {
+  if (!value || typeof value !== 'object') return false;
+  const obj = value as Record<string, unknown>;
+  if (!isNonEmptyString(obj.premise)) return false;
+
+  const validateCore = (item: unknown): item is OverlapCoreItem => {
+    if (!item || typeof item !== 'object') return false;
+    const record = item as Record<string, unknown>;
+    return (
+      isNonEmptyString(record.world) &&
+      isNonEmptyString(record.a) &&
+      isNonEmptyString(record.b) &&
+      isNonEmptyString(record.overlap) &&
+      isLikelySingleSentence(record.overlap)
+    );
+  };
+
+  const validateOuter = (item: unknown): item is OverlapOuterItem => {
+    if (!item || typeof item !== 'object') return false;
+    const record = item as Record<string, unknown>;
+    return (
+      isNonEmptyString(record.world) &&
+      isNonEmptyString(record.seed) &&
+      isNonEmptyString(record.a) &&
+      isNonEmptyString(record.b) &&
+      isNonEmptyString(record.overlap) &&
+      isLikelySingleSentence(record.overlap)
+    );
+  };
+
+  const validateCompression = (item: unknown): item is OverlapCompressionItem => {
+    if (!item || typeof item !== 'object') return false;
+    const record = item as Record<string, unknown>;
+    return (
+      isNonEmptyString(record.world) &&
+      isNonEmptyString(record.a) &&
+      isNonEmptyString(record.b) &&
+      isNonEmptyString(record.line) &&
+      isLikelySingleSentence(record.line)
+    );
+  };
+
+  if (!Array.isArray(obj.core) || !Array.isArray(obj.outer) || !Array.isArray(obj.compression)) {
+    return false;
+  }
+
+  const coreCountValid = obj.core.length >= 10 && obj.core.length <= 15;
+  const outerCountValid = obj.outer.length >= 12 && obj.outer.length <= 25;
+  const compressionCountValid = obj.compression.length >= 5 && obj.compression.length <= 10;
+
+  if (!coreCountValid || !outerCountValid || !compressionCountValid) {
+    return false;
+  }
+
+  return obj.core.every(validateCore) && obj.outer.every(validateOuter) && obj.compression.every(validateCompression);
+}
+
+async function generateOverlapPhase1({ topic, temperature }: { topic: string; temperature: number }): Promise<OverlapPhase1Output> {
+  const openai = getOpenAIClient();
+  const completion = await openai.chat.completions.create({
+    model: BASE_MODEL,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT_BASE_PREMISES },
+      { role: 'developer', content: OVERLAP_PHASE1_DEVELOPER_PROMPT },
+      {
+        role: 'user',
+        content:
+          `Premise:\n${topic}\n\nGenerate overlap analysis JSON now. Keep world as \"unspecified\" unless explicitly provided.`,
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature,
+    max_tokens: 4200,
+  });
+
+  const outputText = completion.choices[0]?.message?.content || '';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(outputText.trim());
+  } catch {
+    throw new Error('Overlap phase 1 returned invalid JSON.');
+  }
+
+  if (!validateOverlapPhase1Output(parsed)) {
+    throw new Error('Overlap phase 1 JSON failed schema validation.');
+  }
+
+  return parsed;
+}
+
+async function generateOverlapPhase2({
+  phase1,
+  styleContract,
+  temperature,
+}: {
+  phase1: OverlapPhase1Output;
+  styleContract: StyleContract;
+  temperature: number;
+}): Promise<OverlapPhase2Output> {
+  const openai = getOpenAIClient();
+
+  const completion = await openai.chat.completions.create({
+    model: REWRITE_MODEL,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT_REWRITE },
+      { role: 'developer', content: OVERLAP_PHASE2_REPORT_DEVELOPER_PROMPT },
+      {
+        role: 'user',
+        content: `STYLE CONTRACT:\n${JSON.stringify(styleContract, null, 2)}\n\nPHASE 1 JSON:\n${JSON.stringify(phase1, null, 2)}`,
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature,
+    max_tokens: 5500,
+  });
+
+  const outputText = completion.choices[0]?.message?.content || '';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(outputText.trim());
+  } catch {
+    throw new Error('Overlap phase 2 returned invalid JSON.');
+  }
+
+  if (!parsed || typeof parsed !== 'object' || !isNonEmptyString((parsed as Record<string, unknown>).report)) {
+    throw new Error('Overlap phase 2 must return {"report":"..."}.');
+  }
+
+  return { report: (parsed as { report: string }).report };
+}
+
+export async function generateOverlapComedyReport({
+  topic,
+  styleContract,
+  config = {},
+}: {
+  topic: string;
+  styleContract?: StyleContract;
+  config?: ComedyGenerationConfig;
+}): Promise<{ phase1: OverlapPhase1Output; phase2: OverlapPhase2Output }> {
+  const finalConfig = { ...getDefaultConfig(), ...config };
+  const contractToUse = styleContract || getDefaultStyleContract();
+
+  const phase1 = await generateOverlapPhase1({
+    topic,
+    temperature: finalConfig.baseTemperature,
+  });
+
+  const phase2 = await generateOverlapPhase2({
+    phase1,
+    styleContract: contractToUse,
+    temperature: finalConfig.rewriteTemperature,
+  });
+
+  return { phase1, phase2 };
 }
 
 /**
