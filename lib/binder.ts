@@ -81,11 +81,16 @@ export async function getBinderStructureForUser(
     // Safety check: ensure parent_note_id exists in the note object
     const parentNoteId = (note as any).parent_note_id ?? note.parent_note_id ?? null;
     
+    // If note has source_base_premise_note_id but no parent_note_id, treat the source as parent
+    // This fixes notes created before parent_note_id was properly set
+    const sourceBasePremiseId = (note as any).source_base_premise_note_id ?? note.source_base_premise_note_id ?? null;
+    const effectiveParentNoteId = parentNoteId || (sourceBasePremiseId && !note.folder_id ? sourceBasePremiseId : null);
+    
     if (note.folder_id) {
       parentId = note.folder_id;
       parentType = 'folder';
-    } else if (parentNoteId) {
-      parentId = parentNoteId;
+    } else if (effectiveParentNoteId) {
+      parentId = effectiveParentNoteId;
       parentType = 'note';
     }
 

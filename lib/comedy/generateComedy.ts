@@ -16,13 +16,10 @@ import {
   JokeGenResponse,
   RewrittenItem,
   JokePair,
-  JokeDiagnostics,
-  PUNCH_STRENGTH_RANK,
-  IRREVERSIBILITY_RANK,
-  SPECIFICITY_RANK,
 } from '@/lib/jokeDiagnostics';
 import { normalizePremise } from './normalizePremise';
 import { getDefaultStyleContract, StyleContract } from './styleContracts';
+import { getBasePremisesByNoteId } from './basePremiseStorage';
 
 export interface ComedyGenerationConfig {
   enableRewrite?: boolean; // default: true
@@ -82,7 +79,7 @@ function redactContent(content: string, maxLength: number = 50): string {
 /**
  * Step 1: Generate base premise notes
  */
-async function generateBasePremises({
+export async function generateBasePremises({
   topic,
   premiseCount,
   cleanLabel,
@@ -189,7 +186,7 @@ function selectPremisesForRewrite(
 /**
  * Step 2: Re-author selected collision notes with voice/style contracts
  */
-async function rewriteJokes({
+export async function rewriteJokes({
   items,
   topic,
   jokeCount,
@@ -327,6 +324,46 @@ Return the same number of objects as inputs, in the same order.`;
   });
 
   return { jokes };
+}
+
+/**
+ * Rewrite premises from a stored note
+ * Loads base premises from the database and rewrites them with the specified style contract
+ */
+export async function rewritePremisesFromNote(
+  noteId: string,
+  styleContract: StyleContract,
+  jokeCount: number,
+  accessToken?: string
+): Promise<JokeGenResponse> {
+  // Get base premises from database
+  const basePremises = await getBasePremisesByNoteId(noteId, accessToken);
+  
+  if (!basePremises) {
+    throw new Error(`No base premises found for note ${noteId}`);
+  }
+
+  // Select the requested number of premises
+  const selectedItems = basePremises.items.slice(0, jokeCount);
+  
+  if (selectedItems.length < jokeCount) {
+    console.warn(
+      `Requested ${jokeCount} jokes but only ${selectedItems.length} premises available. Using ${selectedItems.length}.`
+    );
+  }
+
+  // Get default config for temperature settings
+  const config = getDefaultConfig();
+  
+  // Rewrite with the selected style contract
+  return await rewriteJokes({
+    items: selectedItems,
+    topic: basePremises.topic,
+    jokeCount: selectedItems.length,
+    temperature: config.rewriteTemperature,
+    addReminder: false,
+    styleContract,
+  });
 }
 
 /**

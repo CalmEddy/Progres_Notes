@@ -11,7 +11,7 @@ import NoteChildrenView from './NoteChildrenView';
 import TagChip from './TagChip';
 import TagSelector from './TagSelector';
 import ChunkEditor from './ChunkEditor';
-import JokeDiagnosticsView from './JokeDiagnosticsView';
+import ComedyRewritePanel from './ComedyRewritePanel';
 import { createSupabaseClient } from '@/lib/supabaseClient';
 
 interface NoteEditorProps {
@@ -24,6 +24,7 @@ interface NoteEditorProps {
   onPhraseClick?: (phrase: Phrase) => void;
   onNoteSelect?: (note: Note) => void;
   onCreateChildNote?: () => void;
+  onStructureChange?: () => void;
 }
 
 export default function NoteEditor({
@@ -36,30 +37,64 @@ export default function NoteEditor({
   onPhraseClick,
   onNoteSelect,
   onCreateChildNote,
+  onStructureChange,
 }: NoteEditorProps) {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'content' | 'children' | 'chunks' | null>(null);
-  const [isEditingTags, setIsEditingTags] = useState(false);
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [isEditing, setIsEditing] = useState(false);
+  const [viewMode, setViewMode] = useState<'content' | 'children' | 'chunks'>('content');
   const [chunks, setChunks] = useState<NoteChunk[]>([]);
   const [loadingChunks, setLoadingChunks] = useState(false);
   const [chunksError, setChunksError] = useState<string | null>(null);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>(tags.map(t => t.id));
+  const [isEditingTags, setIsEditingTags] = useState(false);
+  const [hasBasePremises, setHasBasePremises] = useState(false);
+  const [loadingBasePremises, setLoadingBasePremises] = useState(false);
 
   // Update selected tag IDs when tags prop changes
   useEffect(() => {
-    if (note) {
-      setSelectedTagIds(tags.map(tag => tag.id));
-    }
-  }, [tags, note?.id]);
+    setSelectedTagIds(tags.map(t => t.id));
+  }, [tags]);
 
-  // Reset view mode when note changes
+  // Check if note has base premises
   useEffect(() => {
-    setViewMode(null);
-    setChunks([]);
-    setChunksError(null);
-  }, [note?.id]);
+    if (note) {
+      checkBasePremises();
+    } else {
+      setHasBasePremises(false);
+    }
+  }, [note]);
 
-  // Load chunks when switching to chunks view
+  const checkBasePremises = async () => {
+    if (!note) return;
+    
+    try {
+      setLoadingBasePremises(true);
+      const supabase = createSupabaseClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      // Check if base premises exist by querying the comedy_base_premises table directly
+      const { data, error } = await supabase
+        .from('comedy_base_premises')
+        .select('id')
+        .eq('note_id', note.id)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        // PGRST116 is "not found" which is fine, other errors are real errors
+        console.error('Error checking base premises:', error);
+        setHasBasePremises(false);
+      } else {
+        setHasBasePremises(data !== null);
+      }
+    } catch (error) {
+      console.error('Error checking base premises:', error);
+      setHasBasePremises(false);
+    } finally {
+      setLoadingBasePremises(false);
+    }
+  };
+
   const loadChunks = useCallback(async () => {
     if (!note) return;
 
@@ -125,6 +160,18 @@ export default function NoteEditor({
     }
   }, [viewMode, note, loadChunks]);
 
+  const handleRewriteComplete = useCallback((newNoteId: string) => {
+    // Refresh the binder structure to show the new child note
+    if (onStructureChange) {
+      onStructureChange();
+    }
+    // Optionally navigate to the new note
+    if (onNoteSelect) {
+      console.log('Rewrite complete, new note ID:', newNoteId);
+      // Could fetch and select the new note here if desired
+    }
+  }, [onNoteSelect, onStructureChange]);
+
   if (!note) {
     return (
       <div className="flex items-center justify-center h-full bg-gray-50">
@@ -141,9 +188,6 @@ export default function NoteEditor({
   }
 
   const hasChildren = childNotes.length > 0;
-  const shouldShowJokeDiagnostics =
-    Boolean(note.diagnostics && note.diagnostics.length > 0) ||
-    (note.title?.startsWith('Jokes about') ?? false);
   // Default to children view if note has children, otherwise content view
   const currentViewMode = viewMode ?? (hasChildren ? 'children' : 'content');
   
@@ -357,15 +401,36 @@ export default function NoteEditor({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-6">
+          {/* Show link back to source if this is a rewritten note */}
+          {note.source_base_premise_note_id && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center gap-2 text-sm text-blue-700">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                <span>
+                  Rewritten from base premises
+                  {note.style_contract_id && (
+                    <span className="ml-1 font-medium">({note.style_contract_id})</span>
+                  )}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="max-w-none">
-            {shouldShowJokeDiagnostics ? (
-              <JokeDiagnosticsView body={note.body} diagnostics={note.diagnostics} />
-            ) : (
-              <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
-                {note.body}
-              </p>
-            )}
+            <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
+              {note.body}
+            </p>
           </div>
+
+          {/* Show rewrite panel if note has base premises */}
+          {hasBasePremises && !loadingBasePremises && (
+            <ComedyRewritePanel
+              noteId={note.id}
+              onRewriteComplete={handleRewriteComplete}
+            />
+          )}
 
           {/* Phrases */}
           {phrases && phrases.length > 0 && (

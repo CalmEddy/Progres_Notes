@@ -319,19 +319,21 @@ export default function BinderSidebar({
   }, []);
 
   const handleExpandAll = useCallback(() => {
-    const getAllFolderIds = (items: BinderItem[]): string[] => {
+    const getAllExpandableIds = (items: BinderItem[]): string[] => {
       const ids: string[] = [];
       items.forEach(item => {
-        if (item.type === 'folder') {
+        // Expand folders, filter folders, and notes with children
+        const hasChildren = item.children && item.children.length > 0;
+        if (item.type === 'folder' || item.type === 'filter_folder' || (item.type === 'note' && hasChildren)) {
           ids.push(item.id);
           if (item.children) {
-            ids.push(...getAllFolderIds(item.children));
+            ids.push(...getAllExpandableIds(item.children));
           }
         }
       });
       return ids;
     };
-    setExpandedFolders(new Set(getAllFolderIds(binderStructure)));
+    setExpandedFolders(new Set(getAllExpandableIds(binderStructure)));
   }, [binderStructure]);
 
   const handleCollapseAll = useCallback(() => {

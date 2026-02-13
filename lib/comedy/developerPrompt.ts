@@ -52,6 +52,7 @@ IMPORTANT GUIDELINES:
   in the re-authored version.
 – Do not replace the collision with a different idea.
 – Do not reverse or alter the stance of the observation.
+– When re-authoring, obey the style contract constraints exactly (e.g., if it forbids concession phrases or question-led openings, do not use them).
 
 You may:
 – Substitute words and phrases freely.
@@ -78,78 +79,3 @@ Return valid JSON only in exactly this shape:
 Return the same number of objects as inputs, in the same order.
 `;
 
-export const SIMPLIFIED_DEVELOPER_PROMPT = `You are generating original, performance-ready stand-up jokes on the user's topic.
-
-PRIMARY GOAL
-Produce strong stand-up jokes where the punchline resolves an unavoidable situation.
-Joke quality always takes precedence over clever phrasing, commentary, or explanation.
-
---------------------------------------------------
-CORE GENERATION CONSTRAINT (NON-NEGOTIABLE)
---------------------------------------------------
-
-Before writing each joke, you MUST internally place the speaker in a situation where one normal action is no longer possible.
-
-The joke must END with the consequence of that restriction.
-
-If the situation does not require resolution, the joke is invalid.
-
--------------------------------------------------
-STRUCTURE RULES (NON-NEGOTIABLE)
---------------------------------------------------
-
-- Each joke must be a complete stand-up joke with a clear setup and a clear punchline.
-- The punchline MUST be the final sentence of the joke.
-- No sentences may follow the punchline.
-- 1–2 sentences preferred; 3 max only if required to land the punch.
-- One joke per paragraph.
-
---------------------------------------------------
-PUNCHLINE SURVIVAL RULE (SINGLE RULE)
---------------------------------------------------
-
-If the situation could return to baseline without the punchline,
-the joke is INVALID and must be rewritten.
-
---------------------------------------------------
-WHAT DOES NOT COUNT AS A PUNCH
---------------------------------------------------
-
-Do NOT end jokes with:
-- observations, summaries, or opinions
-- realizations (“I realized…”, “now I know…”, “turns out…”)
-- attitude statements (“I love that…”, “nothing says X like Y”)
-- rhetorical questions
-- metaphors or analogies that only describe the situation
-- stress, chaos, or arguing that could simply end with time or agreement
-
---------------------------------------------------
-ESCALATION CLARIFICATION
---------------------------------------------------
-
-Escalation does NOT mean describing the situation more intensely.
-Escalation means the situation now REQUIRES a consequence.
-
---------------------------------------------------
-CONTENT GUIDELINES
---------------------------------------------------
-
-- Avoid narrative padding (“the other day,” “last week,” “so there I was,” “meanwhile”).
-- Avoid soft punch phrases (“apparently,” “turns out,” “at this point,” “it’s like”).
-- Each joke must include at least one concrete detail (object, place, system, behavior, or sensory image).
-- Keep it broadly clean unless the user explicitly requests otherwise.
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT — NON-NEGOTIABLE)
---------------------------------------------------
-
-Return a SINGLE JSON object with EXACTLY this field and nothing else:
-
-{
-  "jokes": ["first joke text here", "second joke text here"]
-}
-
-Field rules:
-- "jokes" is an array of strings. Length MUST equal the requested number of jokes.
-- Output MUST be valid JSON only. No explanations, prose, or extra keys.
-`;

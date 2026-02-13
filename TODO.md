@@ -39,6 +39,7 @@ This file tracks future tasks and improvements for the project.
 ## Technical Debt
 
 ### High Priority
+- [ ] Run database migration to remove diagnostics column from notes table (migration file: `supabase/migrations/20260103140324_remove_diagnostics.sql`)
 - [ ] Remove deprecated `baseJokes` field once all clients are updated
 - [ ] Add comprehensive error handling for edge cases
 
@@ -53,6 +54,8 @@ This file tracks future tasks and improvements for the project.
 - [ ] Custom world constraint definitions
 - [ ] Premise template library
 - [ ] Joke collaboration/sharing features
+- [ ] Create an association/context list maker prompt
+  - This will be a tool that generates contexts on a topic, rather than jokes
 
 ---
 

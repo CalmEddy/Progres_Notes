@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { generateComedy } from '@/lib/comedy/generateComedy';
+import { rewritePremisesFromNote } from '@/lib/comedy/generateComedy';
 import { createNoteForUser } from '@/lib/notes';
-import { getStyleContract, StyleContract } from '@/lib/comedy/styleContracts';
+import { getStyleContract, getDefaultStyleContract } from '@/lib/comedy/styleContracts';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -38,15 +38,17 @@ async function getSessionFromRequest(request: NextRequest) {
 }
 
 /**
- * POST /api/comedy/generate
+ * POST /api/comedy/rewrite
  * 
- * Generate comedy material based on topic and count
+ * Stage 2: Rewrite stored base premises with a different style contract
  * 
  * Request body:
- * - topic: string (required)
- * - jokeCount: number (required, clamped to 1-25, defaults to 10)
+ * - noteId: string (required) - ID of the note containing base premises
+ * - styleContractId: string (optional) - ID of the style contract to use, defaults to default style
+ * - jokeCount: number (optional, defaults to 10) - Number of jokes to generate
  * 
  * Response:
+ * - noteId: string - ID of the created rewritten note
  * - text: string - Full text output
  * - chunks: string[] - Material split by blank lines
  * - note: object - Created note information (id, title, created_at)
@@ -60,12 +62,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { topic, jokeCount, clean, styleContractId } = body;
+    const { noteId, styleContractId, jokeCount } = body;
 
-    // Validate topic
-    if (!topic || typeof topic !== 'string' || topic.trim().length === 0) {
+    // Validate noteId
+    if (!noteId || typeof noteId !== 'string' || noteId.trim().length === 0) {
       return NextResponse.json(
-        { error: 'Topic is required and must be a non-empty string' },
+        { error: 'noteId is required and must be a non-empty string' },
         { status: 400 }
       );
     }
@@ -85,8 +87,8 @@ export async function POST(request: NextRequest) {
       count = 10; // default
     }
 
-    // Get style contract if specified
-    let styleContract: StyleContract | undefined = undefined;
+    // Get style contract
+    let styleContract;
     if (styleContractId) {
       const contract = getStyleContract(styleContractId);
       if (!contract) {
@@ -96,18 +98,20 @@ export async function POST(request: NextRequest) {
         );
       }
       styleContract = contract;
+    } else {
+      styleContract = getDefaultStyleContract();
     }
 
-    // Generate comedy
-    const result = await generateComedy({
-      topic: topic.trim(),
-      jokeCount: count,
-      clean: clean !== false, // default to true
+    // Rewrite premises from the stored note
+    const rewriteResponse = await rewritePremisesFromNote(
+      noteId,
       styleContract,
-    });
+      count,
+      session.accessToken
+    );
 
     // Extract text from RewrittenItem[] format
-    const jokeStrings = result.jokes.map((item) => {
+    const jokeStrings = rewriteResponse.jokes.map((item) => {
       if ('text' in item) {
         return item.text;
       } else if ('a' in item) {
@@ -119,23 +123,67 @@ export async function POST(request: NextRequest) {
     const text = jokeStrings.join('\n\n');
     const chunks = jokeStrings;
 
-    // Save generated jokes as a note
-    const noteTitle = `Jokes about ${topic.trim()}`;
+    // Get the source note to get the topic for the title
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+        },
+      },
+    });
+
+    const { data: sourceNote, error: sourceNoteError } = await supabase
+      .from('notes')
+      .select('title')
+      .eq('id', noteId)
+      .single();
+
+    if (sourceNoteError || !sourceNote) {
+      return NextResponse.json(
+        { error: 'Source note not found' },
+        { status: 404 }
+      );
+    }
+
+    // Extract topic from source note title (format: "Base premises: {topic}")
+    const topicMatch = sourceNote.title?.match(/^Base premises:\s*(.+)$/);
+    const topic = topicMatch ? topicMatch[1] : 'this topic';
+
+    // Count existing child notes to determine position
+    const { count: childCount } = await supabase
+      .from('notes')
+      .select('*', { count: 'exact', head: true })
+      .eq('parent_note_id', noteId)
+      .eq('user_id', session.user.id);
+    
+    const position = childCount !== null ? childCount : 0;
+
+    // Create note with rewritten jokes, nested under the base premise note
+    const noteTitle = `Jokes about ${topic} (${styleContract.styleId})`;
     const note = await createNoteForUser(
       session.user.id,
       noteTitle,
       text,
       undefined, // folderId
-      undefined, // parentNoteId
-      undefined, // position
+      noteId, // parentNoteId - nest under the base premise note
+      position, // position - append to end of children
       session.accessToken
     );
 
+    // Link the rewritten note back to the base premise note
+    // (set source_base_premise_note_id and style_contract_id)
+    await supabase
+      .from('notes')
+      .update({
+        source_base_premise_note_id: noteId,
+        style_contract_id: styleContract.styleId,
+      })
+      .eq('id', note.id);
+
     return NextResponse.json({
+      noteId: note.id,
       text,
       chunks,
-      baseJokes: result.baseJokes, // Deprecated: for backward compatibility
-      selectedPremises: result.selectedPremises, // Selected premises sent to rewrite step
       note: {
         id: note.id,
         title: note.title,
@@ -143,12 +191,13 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Error in comedy generation endpoint:', error);
+    console.error('Error in rewrite endpoint:', error);
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : 'Failed to generate comedy',
+        error: error instanceof Error ? error.message : 'Failed to rewrite premises',
       },
       { status: 500 }
     );
   }
 }
+

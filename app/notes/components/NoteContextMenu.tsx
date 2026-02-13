@@ -72,7 +72,6 @@ export default function NoteContextMenu({
         user_id: session.user.id,
         title: null,
         body: '',
-        diagnostics: null,
         folder_id: null,
         parent_note_id: noteId,
         position: 0,

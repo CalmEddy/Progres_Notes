@@ -6,7 +6,6 @@ import { storePhrasesForNote } from './phrases/phraseStorage';
 import { createChunksForNote } from './chunks/chunking';
 import { generateEmbeddingsForNoteChunks } from './chunks/embeddingService';
 import { generateThemeForNote } from './themes/themeGeneration';
-import { JokeDiagnostics } from './jokeDiagnostics';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -33,12 +32,13 @@ export interface Note {
   user_id: string;
   title: string | null;
   body: string;
-  diagnostics: JokeDiagnostics[] | null;
   folder_id: string | null;
   parent_note_id: string | null;
   position: number;
   conversation_id: string | null;
   is_conversation: boolean;
+  source_base_premise_note_id: string | null;
+  style_contract_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,8 +59,7 @@ export async function createNoteForUser(
   folderId?: string | null,
   parentNoteId?: string | null,
   position?: number,
-  accessToken?: string,
-  diagnostics?: JokeDiagnostics[] | null
+  accessToken?: string
 ): Promise<Note> {
   // Allow empty body if we have a title (for pages with only titles)
   if ((!body || body.trim().length === 0) && !title) {
@@ -91,7 +90,6 @@ export async function createNoteForUser(
       title: title || null,
       body: body.trim(),
       embedding: embedding,
-      diagnostics: diagnostics ?? null,
       folder_id: folderId !== undefined ? folderId : null,
       parent_note_id: parentNoteId !== undefined ? parentNoteId : null,
       position: position !== undefined ? position : 0,

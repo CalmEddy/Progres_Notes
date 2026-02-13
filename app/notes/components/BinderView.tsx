@@ -19,6 +19,7 @@ import FilteredNotesView from './FilteredNotesView';
 import ChunksColumn from './ChunksColumn';
 import ChunkContentColumn from './ChunkContentColumn';
 import CollectionItemsColumn from './CollectionItemsColumn';
+import ComedyGenerator from './ComedyGenerator';
 import { NoteChunk } from '@/lib/chunks/chunking';
 import {
   addItemToTree,
@@ -56,6 +57,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
   const [searchCriteriaToSave, setSearchCriteriaToSave] = useState<SearchCriteria | null>(null);
   const [chunkSearchResults, setChunkSearchResults] = useState<BinderSearchResult[] | null>(null);
   const [isChunkSearching, setIsChunkSearching] = useState(false);
+  const [showComedyGenerator, setShowComedyGenerator] = useState(false);
 
   // Track which notes have phrases/tags loaded
   const loadedPhrasesRef = useRef<Set<string>>(new Set());
@@ -590,7 +592,6 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         user_id: '', // Will be set by server
         title: noteTitle,
         body: noteBody,
-        diagnostics: null,
         folder_id: null,
         parent_note_id: null,
         position: binderStructure.filter(item => !item.parent_id).length,
@@ -647,6 +648,23 @@ export default function BinderView({ userEmail }: BinderViewProps) {
     }
   };
 
+  const handleComedyGenerateComplete = useCallback(async (noteId: string) => {
+    setShowComedyGenerator(false);
+    // Reload binder structure to show the new note
+    await loadBinderStructure();
+    // Fetch and select the new note
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`/api/notes/${noteId}`, { headers });
+      if (response.ok) {
+        const note = await response.json();
+        await handleNoteSelect(note);
+      }
+    } catch (err) {
+      console.error('Error loading generated note:', err);
+    }
+  }, [loadBinderStructure, handleNoteSelect]);
+
   const handleCreateChildNote = async () => {
     if (!selectedNote) return;
     
@@ -670,7 +688,6 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         user_id: '',
         title: noteTitle,
         body: noteBody,
-        diagnostics: null,
         folder_id: null,
         parent_note_id: selectedNote.id,
         position: childNotes.length,
@@ -772,6 +789,12 @@ export default function BinderView({ userEmail }: BinderViewProps) {
             className="btn-primary text-sm"
           >
             New Note
+          </button>
+          <button
+            onClick={() => setShowComedyGenerator(true)}
+            className="btn-secondary text-sm"
+          >
+            Generate Comedy
           </button>
           <a
             href="/chat"
@@ -938,6 +961,7 @@ export default function BinderView({ userEmail }: BinderViewProps) {
               onPhraseClick={handlePhraseClick}
               onNoteSelect={handleNoteSelect}
               onCreateChildNote={handleCreateChildNote}
+              onStructureChange={loadBinderStructure}
             />
           </div>
         ) : (
@@ -960,6 +984,34 @@ export default function BinderView({ userEmail }: BinderViewProps) {
         onSave={handleSaveSearchCollection}
         searchCriteria={searchCriteriaToSave}
       />
+
+      {/* Comedy Generator Modal */}
+      {showComedyGenerator && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Generate Comedy Base Premises
+              </h2>
+              <button
+                onClick={() => setShowComedyGenerator(false)}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Close"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-4 overflow-y-auto flex-1">
+              <ComedyGenerator
+                onGenerateComplete={handleComedyGenerateComplete}
+                onError={(error) => alert(error)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,7 +8,6 @@ import { generateComedy } from '../lib/comedy/generateComedy';
 import {
   validateJokeGenResponse,
   JokeGenResponse,
-  JokeDiagnostics,
 } from '../lib/jokeDiagnostics';
 import * as dotenv from 'dotenv';
 
@@ -61,18 +60,8 @@ async function testSchemaValidation() {
       throw new Error('Response does not match JokeGenResponse schema');
     }
 
-    // Validate diagnostics structure
-    result.diagnostics.forEach((diag, index) => {
-      if (!diag.resolutionType || !diag.punchStrength || !diag.irreversibility || !diag.specificity) {
-        throw new Error(`Diagnostics[${index}] missing required fields`);
-      }
-      if (!Array.isArray(diag.failureFlags)) {
-        throw new Error(`Diagnostics[${index}].failureFlags is not an array`);
-      }
-    });
-
     console.log('✓ Schema validation passed');
-    console.log(`  Generated ${result.jokes.length} jokes with valid diagnostics`);
+    console.log(`  Generated ${result.jokes.length} jokes`);
     return true;
   } catch (error) {
     console.error('✗ Schema validation failed:', error);
@@ -97,14 +86,8 @@ async function testCountValidation() {
       );
     }
 
-    if (result.diagnostics.length !== jokeCount) {
-      throw new Error(
-        `Expected ${jokeCount} diagnostics, got ${result.diagnostics.length}`
-      );
-    }
-
     console.log('✓ Count validation passed');
-    console.log(`  Returned exactly ${jokeCount} jokes and ${jokeCount} diagnostics`);
+    console.log(`  Returned exactly ${jokeCount} jokes`);
     return true;
   } catch (error) {
     console.error('✗ Count validation failed:', error);
@@ -186,41 +169,6 @@ async function testFallbackBehavior() {
   }
 }
 
-/**
- * Test 5: Filtering logic (indirect test via diagnostics)
- */
-async function testFilteringLogic() {
-  console.log('\n=== Test 5: Filtering Logic ===');
-  const topic = 'smartphones';
-  const jokeCount = 5;
-
-  try {
-    const result = await generateComedy({ topic, jokeCount });
-
-    // Check that returned jokes have good diagnostics
-    // (filtering should prefer Concrete specificity)
-    const concreteCount = result.diagnostics.filter(
-      d => d.specificity === 'Concrete'
-    ).length;
-    const vagueCount = result.diagnostics.filter(d => d.specificity === 'Vague').length;
-
-    // Most jokes should be Concrete (filtering should have removed Vague ones)
-    if (vagueCount > jokeCount * 0.4) {
-      console.warn(
-        `  Warning: ${vagueCount} out of ${jokeCount} jokes are Vague (expected fewer)`
-      );
-    }
-
-    console.log('✓ Filtering logic test passed');
-    console.log(
-      `  Specificity distribution: ${concreteCount} Concrete, ${vagueCount} Vague`
-    );
-    return true;
-  } catch (error) {
-    console.error('✗ Filtering logic test failed:', error);
-    return false;
-  }
-}
 
 /**
  * Test 6: Config flags
@@ -396,7 +344,6 @@ async function runAllTests() {
     results.push(await testCountValidation());
     results.push(await testRewritingVerification());
     results.push(await testFallbackBehavior());
-    results.push(await testFilteringLogic());
     results.push(await testConfigFlags());
     results.push(await testBaseCountCalculation());
   } else {
